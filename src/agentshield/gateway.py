@@ -166,13 +166,34 @@ async def local_audit_contract(request: Request) -> dict[str, object]:
         again = await repository.consume_nonce(
             "ci_local", nonce, 1_790_000_000_000, 1_790_000_060_000,
         )
-        if stored != event or other_tenant is not None or replay_created or not first or again:
+        # This approved state is a synthetic local DB fixture only; no
+        # approver identity or public approval API is implemented here.
+        approval_id = "local_approval_" + secrets.token_hex(12)
+        await database.prepare(
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,"
+            "state,expires_at_ms,created_at_ms) VALUES (?,?,?,?,?,?,?,?)"
+        ).bind(
+            approval_id, "ci_local", "ci_local:demo_agent", event.action_digest,
+            "policy-v1", "approved", 1_790_000_060_000, 1_790_000_000_000,
+        ).run()
+        wrong = await repository.consume_approved_request(
+            "other_tenant", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        consumed = await repository.consume_approved_request(
+            "ci_local", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        consumed_again = await repository.consume_approved_request(
+            "ci_local", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        if (stored != event or other_tenant is not None or replay_created
+            or not first or again or wrong or not consumed or consumed_again):
             raise RuntimeError("Local audit contract mismatch")
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Local audit contract failed") from exc
     return {
         "d1_audit_contract": "ok", "redacted_event_hash": event.fingerprint,
         "tenant_isolated": True, "event_idempotent": True,
-        "nonce_once": True, "enforcement_ready": False,
+        "nonce_once": True, "approval_once": True, "enforcement_ready": False,
         "executed": False,
     }
