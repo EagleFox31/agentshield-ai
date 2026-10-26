@@ -69,7 +69,7 @@ The stack and interfaces will be refined during the threat-modeling milestone. P
 - **Audit:** event integrity, verification and privacy controls.
 - **Proof of concept:** optional blockchain anchoring and a public demo.
 
-Development is tracked through GitHub Issues and **[AppFactory Project Automation](https://github.com/EagleFox31/appfactory-project-automation)**. No ZIP-based setup is required.
+Development is tracked through the [AgentShield AI GitHub Project board](https://github.com/users/EagleFox31/projects/12), [GitHub Issues](https://github.com/EagleFox31/agentshield-ai/issues) and **[AppFactory Project Automation](https://github.com/EagleFox31/appfactory-project-automation)**. No ZIP-based setup is required.
 
 ## Maintainer
 
