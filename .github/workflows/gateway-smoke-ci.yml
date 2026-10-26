@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'src/agentshield/gateway.py'
+      - 'src/agentshield/audit*.py'
+      - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
@@ -15,6 +17,8 @@ on:
     branches: [main]
     paths:
       - 'src/agentshield/gateway.py'
+      - 'src/agentshield/audit*.py'
+      - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
@@ -57,6 +61,8 @@ jobs:
           python-version: '3.13'
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
         run: uv run --group worker python scripts/make_local_identity_fixture.py
+      - name: Apply portable audit schema to LOCAL D1 only
+        run: npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
@@ -101,7 +107,9 @@ jobs:
               exit 1
             fi
           done
-          echo 'Local FastAPI, D1 binding and ES256 JWT verification passed in Python Workers.'
+          curl --fail --silent --show-error -X POST http://127.0.0.1:8787/_local/audit-contract > /tmp/agentshield-audit.json
+          python -c 'import json; d=json.load(open("/tmp/agentshield-audit.json")); assert d["d1_audit_contract"]=="ok" and d["tenant_isolated"] and d["event_idempotent"] and d["nonce_once"] and not d["executed"]'
+          echo 'Local FastAPI, D1 redacted audit, one-time nonce and ES256 JWT passed in Python Workers.'
       - name: Print diagnostic on failure
         if: failure()
         run: |
