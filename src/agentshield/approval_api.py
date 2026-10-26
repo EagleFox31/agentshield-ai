@@ -22,7 +22,9 @@ from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError,
     VerifiedAgent, require_bearer,
 )
-from agentshield.policy import Effect, PolicyEngine, Rule, ToolAction
+from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
+from agentshield.detection import UntrustedSegment, ToolObservation, assess_threat
+from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 
 router = APIRouter()
@@ -265,6 +267,38 @@ async def operator_local_merkle_batch(request: Request):
         }
     except (AuditStorageError, InvalidEvidence) as exc:
         raise HTTPException(status_code=503, detail="Local evidence computation failed") from exc
+
+
+
+
+@router.get("/_local/demo/threat-triage")
+async def operator_local_threat_triage(request: Request):
+    """Local-only synthetic signal preview; no LLM call or authorization.
+
+    The operator identity gates report access; a separate fixed, least-
+    privilege demo Principal demonstrates that the model and source content
+    cannot grant scopes or execute supplier tools.
+    """
+    operator = _identity(request, "OPERATOR", "approvals:read")
+    fixture_principal = Principal(
+        operator.tenant_id + ":invoice_fixture",
+        frozenset({"invoice:read"}),
+    )
+    baseline = demo_rules(fixture_principal).evaluate(fixture_principal, SUPPLIER_CHANGE)
+    report = await assess_threat(
+        baseline,
+        [UntrustedSegment("fixture-invoice-0042", "retrieved_document", INVOICE_TEXT)],
+        [
+            ToolObservation("fixture-invoice-read-01", "read", Effect.ALLOW),
+            ToolObservation("fixture-supplier-deny-01", "supplier_mutation", baseline.effect),
+        ],
+        model=None,  # No provider, prompts, keys, billing or external inference.
+    )
+    return {
+        **report.to_dict(), "tenant_id": operator.tenant_id,
+        "source_document_included": False, "model_provider_configured": False,
+        "authorization_from_ai": False, "real_tool_called": False,
+    }
 
 
 @router.get("/_local/dashboard", response_class=HTMLResponse)
