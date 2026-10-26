@@ -35,7 +35,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install HTTP smoke dependencies
-        run: python -m pip install -e '.[gateway]' 'httpx>=0.28,<0.29'
+        run: python -m pip install -e . 'httpx>=0.28,<0.29'
       - name: Run independent HTTP + fake-D1 regression suite
         env:
           PYTHONPATH: src
@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run --extra gateway --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
+          uv run --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           ready=0
