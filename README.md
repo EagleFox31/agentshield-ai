@@ -139,6 +139,40 @@ The near-term goal is a **small, independently testable security engine**, not a
 
 No detection percentages, performance benchmarks or production claims will be displayed until reproducible measurements exist.
 
+## First executable milestone — policy core (prototype)
+
+The first component is now implemented as a small, **dependency-free Python policy evaluator** (see [PR #7](https://github.com/EagleFox31/agentshield-ai/pull/7)). It makes decisions about **proposed** tool actions; it does not execute tools or authenticate remote callers.
+
+Example (from a repository checkout, using Python 3.11+):
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+```python
+from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
+
+engine = PolicyEngine([
+    Rule(
+        id="invoice-read-only",
+        principal_id="invoice-agent",
+        tool="invoices",
+        operation="read",
+        resource="invoice/42",
+        required_scope="invoice:read",
+        effect=Effect.ALLOW,
+    )
+])
+verified_principal = Principal("invoice-agent", frozenset({"invoice:read"}))
+decision = engine.evaluate(
+    verified_principal,
+    ToolAction("suppliers", "update_bank_account", "supplier/482"),
+)
+assert decision.effect == Effect.DENY
+```
+
+**Trust boundary:** `verified_principal` must come from authentication outside the model and outside the agent's untrusted text. Unknown resources are denied; approval decisions currently signal that approval is needed but do not issue executable grants. The gateway/API adapter and production hardening remain roadmap items.
+
 ## Technology direction
 
 **Python / FastAPI** · Pydantic · pytest · PostgreSQL (candidate) · Docker · GitHub Actions · optional EVM testnet.
