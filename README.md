@@ -175,9 +175,11 @@ assert decision.effect == Effect.DENY
 
 ## Technology direction
 
-**Python / FastAPI** · Pydantic · pytest · PostgreSQL (candidate) · Docker · GitHub Actions · optional EVM testnet.
+**Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
 
 A framework-specific adapter and an MCP-compatible proxy are **research targets**, not currently shipped integrations. See [architecture and trust boundaries](docs/ARCHITECTURE.md).
+
+**Accepted design decisions:** [ADR index](docs/adr/README.md) · [MVP scope and exit criteria](docs/MVP_SCOPE.md) · [D1 audit ADR](docs/adr/0005-cloudflare-d1-audit-storage.md) · [Cloudflare/Python compatibility ADR](docs/adr/0008-cloudflare-python-workers-deployment-target.md). Runtime integration and audit persistence remain backlog items, not implemented features.
 
 ### Repository development workflow
 
