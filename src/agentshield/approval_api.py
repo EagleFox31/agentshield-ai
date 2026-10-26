@@ -129,6 +129,10 @@ async def operator_list(request: Request):
     now = _now()
     try:
         rows = await list_approvals(store, operator.tenant_id)
+        for item in rows:
+            if item.state in ("pending", "approved") and item.expires_at_ms <= now:
+                await expire_if_needed(store, operator.tenant_id, item.approval_id, now)
+        rows = await list_approvals(store, operator.tenant_id)
     except AuditStorageError as exc:
         raise HTTPException(status_code=503, detail="Approval read failed") from exc
     return {"approvals": [_data(x, now) for x in rows], "enforcement_ready": False}
@@ -183,9 +187,11 @@ async def demo_consume(approval_id: str, body: DemoAction, request: Request):
     agent = _identity(request, "AGENT")
     store = _store(request)
     try:
+        now = _now()
+        await expire_if_needed(store, agent.tenant_id, approval_id, now)
         success = await consume_mock(
             store, agent, approval_id, DEMO_ACTION,
-            {"fixture": body.fixture}, _policy(agent), _now(),
+            {"fixture": body.fixture}, _policy(agent), now,
         )
     except AuditStorageError as exc:
         raise HTTPException(status_code=503, detail="Consumption audit failed") from exc
