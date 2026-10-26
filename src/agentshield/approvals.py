@@ -22,8 +22,8 @@ MAX_APPROVAL_MS = 120_000
 INSERT_AUDIT = (
     "INSERT INTO audit_events "
     "(event_id,tenant_id,principal_id,action_digest,effect,reason_codes_json,"
-    "policy_version,occurred_at_ms,retention_until_ms,event_sha256) "
-    "VALUES (?,?,?,?,?,?,?,?,?,?)"
+    "policy_version,occurred_at_ms,retention_until_ms,event_sha256,approval_id) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?)"
 )
 INSERT_APPROVAL = (
     "INSERT INTO approval_requests "
@@ -187,14 +187,14 @@ def _audit_if_transition(
         raise ValueError("Unrecognized transition marker")
     cols = (
         "(event_id,tenant_id,principal_id,action_digest,effect,reason_codes_json,"
-        "policy_version,occurred_at_ms,retention_until_ms,event_sha256)"
+        "policy_version,occurred_at_ms,retention_until_ms,event_sha256,approval_id)"
     )
     sql = (
-        f"INSERT INTO audit_events {cols} SELECT ?,?,?,?,?,?,?,?,?,? "
+        f"INSERT INTO audit_events {cols} SELECT ?,?,?,?,?,?,?,?,?,?,? "
         f"WHERE EXISTS (SELECT 1 FROM approval_requests "
         f"WHERE approval_id=? AND {unique_column}=? AND state=?)"
     )
-    return sql, event_arguments(event) + (approval_id, marker, state)
+    return sql, event_arguments(event) + (approval_id, approval_id, marker, state)
 
 
 async def create_pending(
@@ -211,7 +211,7 @@ async def create_pending(
     await store.atomic([
         (INSERT_APPROVAL, (approval_id, agent.tenant_id, agent.principal.id,
                            digest, POLICY_VERSION, expires, now_ms)),
-        (INSERT_AUDIT, event_arguments(audit)),
+        (INSERT_AUDIT, event_arguments(audit) + (approval_id,)),
     ])
     return Approval(approval_id, agent.tenant_id, agent.principal.id,
                     digest, POLICY_VERSION, "pending", expires, now_ms)
