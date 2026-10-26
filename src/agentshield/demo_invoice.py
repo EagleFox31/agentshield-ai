@@ -38,7 +38,7 @@ class SimulatedOutcome:
     audit_event_ids: tuple[str, ...]
     invoice_reads: int
     supplier_writes: int
-    claims_verified_externally: bool
+    identity_source: str
     malicious_content_authorized: bool
     real_tool_called: bool
 
@@ -63,6 +63,17 @@ class RecordingMockTools:
     def update_supplier(self) -> None:
         self.supplier_writes += 1
         raise AssertionError("Synthetic supplier mutation should never be dispatched")
+
+
+def dispatch_mock(effect: Effect, action: ToolAction, tools: RecordingMockTools) -> str | None:
+    """Single mock enforcement choke point: no side effects on DENY/REVIEW."""
+    if effect != Effect.ALLOW:
+        return None
+    if action == INVOICE:
+        return tools.read_invoice()
+    # Unknown/high-impact tools are intentionally never dispatched by this
+    # demonstration; this is not a general-purpose execution gateway.
+    raise RuntimeError("No execution adapter for high-impact actions")
 
 
 def _rules(principal: Principal) -> PolicyEngine:
@@ -94,6 +105,8 @@ async def run_invoice_attack(
     """
     if not principal.id.startswith(tenant_id + ":"):
         raise ValueError("Untrusted or cross-tenant principal")
+    if principal.scopes != frozenset({"invoice:read"}):
+        raise ValueError("Scenario must use exactly the limited invoice:read scope")
     engine = _rules(principal)
     mock = tools if tools is not None else RecordingMockTools()
     read_id, denied_id = _event_id(), _event_id()
@@ -106,7 +119,9 @@ async def run_invoice_attack(
     )
     if read.effect != Effect.ALLOW:
         raise AssertionError("Synthetic invoice read fixture was not permitted")
-    untrusted_invoice = mock.read_invoice()
+    untrusted_invoice = dispatch_mock(read.effect, INVOICE, mock)
+    if untrusted_invoice is None:
+        raise AssertionError("An authorized invoice read was not dispatched")
     assert "[UNTRUSTED DOCUMENT INJECTION]" in untrusted_invoice
 
     # The hostile text *proposes* a supplier mutation. It has no authority to
@@ -121,6 +136,7 @@ async def run_invoice_attack(
     # is not the negative demonstration and must abort rather than modify.
     if denied.effect != Effect.DENY:
         raise AssertionError("The hostile invoice demo requires a DENY")
+    dispatch_mock(denied.effect, SUPPLIER_CHANGE, mock)
     if mock.supplier_writes:
         raise AssertionError("Supplier tool invoked during a denied action")
 
@@ -131,6 +147,6 @@ async def run_invoice_attack(
         read_reasons=read.reasons, denied_reasons=denied.reasons,
         audit_event_ids=(read_id, denied_id),
         invoice_reads=mock.invoice_reads, supplier_writes=mock.supplier_writes,
-        claims_verified_externally=True,
+        identity_source="provided_by_caller_not_verified_in_domain",
         malicious_content_authorized=False, real_tool_called=False,
     )
