@@ -7,6 +7,9 @@ on:
       - 'src/agentshield/audit*.py'
       - 'migrations/**'
       - 'src/agentshield/identity.py'
+      - 'src/agentshield/approval*.py'
+      - 'src/agentshield/approvals.py'
+      - 'scripts/approval_cli.py'
       - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
       - 'tests/gateway/**'
@@ -20,6 +23,9 @@ on:
       - 'src/agentshield/audit*.py'
       - 'migrations/**'
       - 'src/agentshield/identity.py'
+      - 'src/agentshield/approval*.py'
+      - 'src/agentshield/approvals.py'
+      - 'scripts/approval_cli.py'
       - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
       - 'tests/gateway/**'
@@ -62,7 +68,9 @@ jobs:
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
         run: uv run --group worker python scripts/make_local_identity_fixture.py
       - name: Apply portable audit schema to LOCAL D1 only
-        run: npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
+        run: |
+          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
+          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
@@ -110,6 +118,55 @@ jobs:
           curl --fail --silent --show-error -X POST http://127.0.0.1:8787/_local/audit-contract > /tmp/agentshield-audit.json
           python -c 'import json; d=json.load(open("/tmp/agentshield-audit.json")); assert d["d1_audit_contract"]=="ok" and d["tenant_isolated"] and d["event_idempotent"] and d["nonce_once"] and not d["executed"]'
           echo 'Local FastAPI, D1 redacted audit, one-time nonce and ES256 JWT passed in Python Workers.'
+          # Separate operator and agent JWT trust roots, with a local-only mock.
+          agent_token=$(cat .local-jwt/approval_agent.txt)
+          operator_token=$(cat .local-jwt/operator_valid.txt)
+          readonly_token=$(cat .local-jwt/operator_readonly.txt)
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H "Content-Type: application/json" \
+            -d '{"fixture":"scenario-A"}' \
+            http://127.0.0.1:8787/_local/demo/approval-requests > /tmp/approval-created.json
+          approval_id=$(python -c 'import json; d=json.load(open("/tmp/approval-created.json"));assert d["state"]=="pending"; print(d["approval_id"])')
+          # Agent token cannot impersonate human operator.
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" http://127.0.0.1:8787/_local/approvals)
+          test "$status" = 401
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/approvals > /tmp/operator-list.json
+          python -c 'import json; d=json.load(open("/tmp/operator-list.json"));assert d["approvals"][0]["state"]=="pending"'
+          # Read-only operator is barred from approving.
+          status=$(curl --silent -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $readonly_token" \
+            "http://127.0.0.1:8787/_local/approvals/$approval_id/approve")
+          test "$status" = 403
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $operator_token" \
+            "http://127.0.0.1:8787/_local/approvals/$approval_id/approve" > /tmp/approval-approved.json
+          python -c 'import json;d=json.load(open("/tmp/approval-approved.json"));assert d["state"]=="approved" and not d["executed"]'
+          # Changed argument digest cannot use a grant.
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-B"}' \
+            "http://127.0.0.1:8787/_local/demo/approvals/$approval_id/consume")
+          test "$status" = 409
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-A"}' \
+            "http://127.0.0.1:8787/_local/demo/approvals/$approval_id/consume" > /tmp/approval-consumed.json
+          python -c 'import json;d=json.load(open("/tmp/approval-consumed.json"));assert d["simulated_execution"] and d["real_tool_called"] is False'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-A"}' \
+            "http://127.0.0.1:8787/_local/demo/approvals/$approval_id/consume")
+          test "$status" = 409
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            "http://127.0.0.1:8787/_local/approvals/$approval_id/audit" > /tmp/approval-audit.json
+          python -c 'import json;d=json.load(open("/tmp/approval-audit.json"));assert len(d["events"])>=3 and all(len(e["event_sha256"])==64 for e in d["events"])'
+          curl --fail --silent http://127.0.0.1:8787/_local/dashboard > /tmp/approval-dashboard.html
+          grep -q 'Human review' /tmp/approval-dashboard.html
+          echo 'Human approval workflow (operator JWT, D1 atomic review, evidence, one-time mock) verified locally.'
       - name: Print diagnostic on failure
         if: failure()
         run: |
