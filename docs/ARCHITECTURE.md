@@ -73,15 +73,19 @@ Audit: decisions -> redacted event store -> hash chain
 ## Interfaces & extension points
 - **Planned:** Python SDK / proxy adapter for one selected agent framework.
 - **Planned:** MCP-compatible tool proxy, contingent on conformance/security testing.
-- **Deferred:** dashboard, orchestration UI, multi-agent collaboration and production blockchain integration.
+- **MVP planned:** minimal human approval dashboard + CLI backed by a shared authenticated approval API.
+- **Deferred:** general agent orchestration UI, multi-agent collaboration and production blockchain integration.
 
-## Decisions pending ADRs
-- API authentication and agent identity issuance
-- Rule language and canonicalization semantics
-- Approval transport and user identity proof
-- Database and retention strategy
-- Which framework adapter to support first
-- Signature/hashing scheme, batch windows and verifier trust roots
+## Decisions now accepted — ADR-0001 through ADR-0008
+
+The signed-off MVP target is **FastAPI on Cloudflare Python Workers**, short-lived trusted JWT identity, the existing deterministic Python PolicyEngine, a human dashboard + CLI approval system, **Cloudflare D1 for hosted audits with SQLite local adapter**, optional Merkle/EVM testnet proofs, and hybrid advisory AI that cannot authorize tool calls. The architectural choice does not imply the runtime or cloud infrastructure exists.
+
+- [Decision index](adr/README.md)
+- [Precise MVP scope, API contracts and exit gates](MVP_SCOPE.md)
+- [ADR-0005: D1 and local SQLite adapter](adr/0005-cloudflare-d1-audit-storage.md)
+- [ADR-0008: Python Worker runtime and compatibility gate](adr/0008-cloudflare-python-workers-deployment-target.md)
+
+**Outstanding engineering evaluations:** JWT crypto-package support on Python Workers; D1 transaction/nonce concurrency; canonical JSON signatures; issuer/operator identity and rotation; local Python Worker compatibility tests; cryptographic verifier trust roots; later EVM chain and confirmation policy. These are acceptance gates, not unresolved user product choices.
 
 ## Definition of Done for core controls
 A control is not considered implemented until it has positive, negative and bypass tests, observable error behavior, threat-reference mapping, documentation and a CI check.
