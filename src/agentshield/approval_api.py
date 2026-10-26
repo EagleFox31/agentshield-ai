@@ -16,7 +16,8 @@ from agentshield.approvals import (
     consume_mock, create_pending, expire_if_needed, get_approval,
     list_approvals, review,
 )
-from agentshield.audit import AuditStorageError
+from agentshield.audit import AuditStorageError, decode_event
+from agentshield.merkle import build_manifest, inclusion_path, validate_manifest, InvalidEvidence
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError,
     VerifiedAgent, require_bearer,
@@ -223,6 +224,48 @@ async def operator_invoice_attack_evidence(request: Request):
         "evidence_independent_anchoring": False,
         "source_document_included": False,
     }
+
+
+
+@router.get("/_local/demo/merkle-batch")
+async def operator_local_merkle_batch(request: Request):
+    """Produce a local-only *UNANCHORED* Merkle snapshot from D1 audit rows.
+
+    The caller is an authorized operator of the same tenant. This endpoint
+    neither persists a batch nor provides an independently trusted root.
+    """
+    operator = _identity(request, "OPERATOR", "approvals:read")
+    store = _store(request)
+    try:
+        rows = await store.many(
+            "SELECT event_id,tenant_id,principal_id,action_digest,effect,"
+            "reason_codes_json,policy_version,occurred_at_ms,retention_until_ms,"
+            "event_sha256 FROM audit_events WHERE tenant_id=? AND policy_version=? "
+            "ORDER BY occurred_at_ms,event_id LIMIT 256",
+            (operator.tenant_id, "demo-fixture-policy-v1"),
+        )
+        events = [decode_event(row) for row in rows]
+        if not events:
+            raise HTTPException(status_code=404, detail="No local demo evidence")
+        # Stable batch ID for unchanged selected event sets; no cloud writes.
+        import hashlib
+        batch_id = "batch-" + hashlib.sha256(
+            "|".join(event.event_id for event in events).encode("ascii")
+        ).hexdigest()[:24]
+        manifest = build_manifest(
+            events, tenant_id=operator.tenant_id, batch_id=batch_id,
+            created_at_ms=max(event.occurred_at_ms for event in events) + 1,
+        )
+        paths = [inclusion_path(manifest, e.event_id) for e in events]
+        return {
+            "manifest": manifest, "inclusion_paths": paths,
+            "verification_status": validate_manifest(manifest),
+            "evm_status": "not_submitted", "independent_anchor": False,
+            "onchain_verified": False,
+        }
+    except (AuditStorageError, InvalidEvidence) as exc:
+        raise HTTPException(status_code=503, detail="Local evidence computation failed") from exc
+
 
 @router.get("/_local/dashboard", response_class=HTMLResponse)
 async def local_dashboard(request: Request):
