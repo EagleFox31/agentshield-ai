@@ -91,7 +91,7 @@ class JwtIdentityTests(unittest.TestCase):
 
     def test_missing_verifier_or_token_fails_closed(self):
         with TestClient(app) as client:
-            self.assertEqual(client.get("/v1/identity").status_code, 503)
+            self.assertEqual(client.get("/v1/identity", headers={"Authorization": "Bearer " + self.token()}).status_code, 503)
         with TestClient(ScopeEnv(self.settings)) as client:
             res = client.get("/v1/identity")
             self.assertEqual(res.status_code, 401)
@@ -155,7 +155,7 @@ class JwtIdentityTests(unittest.TestCase):
         none_token = jwt.encode(self.claims(), key="", algorithm="none", headers={"kid": "agent-key-1"})
         with self.assertRaises(AgentAuthenticationError):
             verify_agent_jwt(none_token, self.settings)
-        hs_token = jwt.encode(self.claims(), key="attacker-controlled", algorithm="HS256", headers={"kid": "agent-key-1"})
+        hs_token = jwt.encode(self.claims(), key="attacker-controlled-key-that-is-long-enough", algorithm="HS256", headers={"kid": "agent-key-1"})
         with self.assertRaises(AgentAuthenticationError):
             verify_agent_jwt(hs_token, self.settings)
 
