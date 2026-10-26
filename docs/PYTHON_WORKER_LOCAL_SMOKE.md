@@ -20,9 +20,9 @@ There are no authenticated public decision endpoints, JWT verification, policy s
 With Python 3.13, Node.js and [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uv sync --extra gateway --group worker
+uv sync --group worker
 printf 'LOCAL_SMOKE_ENABLED=true\n' > .dev.vars
-uv run --extra gateway --group worker pywrangler dev
+uv run --group worker pywrangler dev
 
 # From a second terminal:
 curl http://127.0.0.1:8787/health
