@@ -16,6 +16,10 @@ class WorkerPackagingTests(unittest.TestCase):
         # dependencies, not solely uv's optional --extra installation.
         dependencies = project["project"].get("dependencies", [])
         self.assertTrue(any(dep.lower().startswith("fastapi") for dep in dependencies))
+        self.assertTrue(any(dep.lower().startswith("pyjwt") for dep in dependencies))
+        # Keep compatible with the Pyodide 314.0.7 compiled cryptography wheel.
+        self.assertIn("cryptography==47.0.0", dependencies)
+
         worker_tools = project.get("dependency-groups", {}).get("worker", [])
         self.assertTrue(any(item.startswith("workers-py") for item in worker_tools))
         self.assertTrue(any(item.startswith("workers-runtime-sdk") for item in worker_tools))

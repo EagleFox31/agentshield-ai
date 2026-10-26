@@ -6,3 +6,6 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
+
+# Ephemeral, generated auth fixtures (CI/local only)
+.local-jwt/

@@ -173,6 +173,16 @@ assert decision.effect == Effect.DENY
 
 **Trust boundary:** `verified_principal` must come from authentication outside the model and outside the agent's untrusted text. Unknown resources are denied; approval decisions currently signal that approval is needed but do not issue executable grants. The gateway/API adapter and production hardening remain roadmap items.
 
+## Second executable milestone — signed agent identity (prototype)
+
+The gateway now includes a **read-only** authenticated identity endpoint, `GET /v1/identity`, using short-lived ES256 JWTs and an issuer-pinned public JWKS. It derives the tenant, agent and effective scopes from **cryptographically verified claims** and rejects unsigned, invalidly signed, expired or wrong-audience tokens.
+
+- **Implementation:** [identity verifier](src/agentshield/identity.py), [FastAPI endpoint](src/agentshield/gateway.py) and [local verification guide](docs/IDENTITY_JWT.md).
+- **Security tests:** key rotation, signature manipulation, header injection, invalid delegated scopes, cross-tenant claims and actual validation inside a local Cloudflare Python Worker.
+- **Not yet implemented:** authentication for executing real tools, persistent nonce/replay checks, token issuance, separate human approver identities, full authorization/audit flow or live Cloudflare deployment. The endpoint reports `enforcement_ready: false`.
+
+This capability is tracked under [issue #10](https://github.com/EagleFox31/agentshield-ai/issues/10) and [PR #15](https://github.com/EagleFox31/agentshield-ai/pull/15). **A valid token proves caller identity for this read-only endpoint; it does not grant execution permission.**
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**

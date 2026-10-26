@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'src/agentshield/gateway.py'
+      - 'src/agentshield/identity.py'
+      - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - 'src/agentshield/gateway.py'
+      - 'src/agentshield/identity.py'
+      - 'scripts/make_local_identity_fixture.py'
       - 'src/worker.py'
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
@@ -51,8 +55,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.13'
-      - name: Enable local-only diagnostics without committing secrets
-        run: echo 'LOCAL_SMOKE_ENABLED=true' > .dev.vars
+      - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
+        run: uv run --group worker python scripts/make_local_identity_fixture.py
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
@@ -83,7 +87,21 @@ jobs:
           python -c 'import json; d=json.load(open("/tmp/agentshield-policy.json")); assert d["effect"]=="deny" and d["executed"] is False'
           curl --fail --silent -X POST http://127.0.0.1:8787/_local/d1-smoke > /tmp/agentshield-d1.json
           python -c 'import json; d=json.load(open("/tmp/agentshield-d1.json")); assert d["d1_local_probe"]=="ok" and d["persistent_audit_ready"] is False'
-          echo 'Local FastAPI ASGI, deterministic policy and local D1 binding passed.'
+          # Test actual JWT cryptographic verification inside Python Workers/Pyodide.
+          curl --silent --show-error --fail \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/v1/identity > /tmp/agentshield-auth.json
+          python -c 'import json; d=json.load(open("/tmp/agentshield-auth.json")); assert d["authenticated"] is True and d["agent_id"]=="local-demo-agent" and d["tenant_id"]=="ci_local" and not d["enforcement_ready"] and not d["executed"]'
+          for fixture in bad_signature wrong_audience expired; do
+            status=$(curl --silent -o /tmp/agentshield-auth-rejected.json -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              http://127.0.0.1:8787/v1/identity)
+            if [[ "$status" != "401" ]]; then
+              echo "Invalid ES256 token was not rejected: $fixture (HTTP $status)"
+              exit 1
+            fi
+          done
+          echo 'Local FastAPI, D1 binding and ES256 JWT verification passed in Python Workers.'
       - name: Print diagnostic on failure
         if: failure()
         run: |
