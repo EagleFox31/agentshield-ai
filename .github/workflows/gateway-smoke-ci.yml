@@ -8,6 +8,9 @@ on:
       - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
+      - 'src/agentshield/detection.py'
+      - 'scripts/evaluate_detection.py'
+      - 'tests/fixtures/detection_v1.json'
       - 'src/agentshield/merkle.py'
       - 'scripts/demo_merkle_proofs.py'
       - 'scripts/verify_merkle.py'
@@ -30,6 +33,9 @@ on:
       - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
+      - 'src/agentshield/detection.py'
+      - 'scripts/evaluate_detection.py'
+      - 'tests/fixtures/detection_v1.json'
       - 'src/agentshield/merkle.py'
       - 'scripts/demo_merkle_proofs.py'
       - 'scripts/verify_merkle.py'
@@ -74,6 +80,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: python scripts/demo_merkle_proofs.py --assert-secure
+      - name: Evaluate synthetic detection confusion matrix without an LLM
+        env:
+          PYTHONPATH: src
+        run: python scripts/evaluate_detection.py --assert-contract
 
   python-worker-d1-local:
     runs-on: ubuntu-latest
@@ -243,6 +253,18 @@ jobs:
             http://127.0.0.1:8787/_local/demo/merkle-batch)
           test "$status" = 401
           echo 'Actual D1 audit entries batched into an UNANCHORED Merkle snapshot, operator-only.'
+          # The signed human operator can inspect rule-only advisory telemetry.
+          # A model provider is not configured, so no network inference, keys
+          # or prompt content can leave this local Worker.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/threat-triage > /tmp/threat-triage.json
+          python -c 'import json;d=json.load(open("/tmp/threat-triage.json"));codes={s["code"] for s in d["signals"]};assert d["policy_effect"]=="deny" and "INSTRUCTION_OVERRIDE" in codes and "PRIVILEGE_REQUEST" in codes and d["model_status"]=="not_configured" and not d["real_tool_called"] and not d["authorization_from_ai"] and not d["source_document_included"]'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/_local/demo/threat-triage)
+          test "$status" = 401
+          echo 'Hybrid triage local preview has advisory-only signals, no model or authorization bypass.'
       - name: Print diagnostic on failure
         if: failure()
         run: |
