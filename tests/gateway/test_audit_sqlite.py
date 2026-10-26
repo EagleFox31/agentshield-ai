@@ -5,6 +5,8 @@ import asyncio
 import hashlib
 import sqlite3
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import unittest
 from pathlib import Path
 
@@ -98,6 +100,31 @@ class AuditSQLiteTests(unittest.TestCase):
                 )))
                 conn.close()
             self.assertEqual(winners, [True, False])
+
+    def test_concurrent_nonce_claims_one_winner_across_connections(self):
+        ts = 1_790_000_000_000
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "shared-audit.sqlite"
+            setup = sqlite3.connect(path)
+            setup.executescript(SQL)
+            setup.close()
+            n = 6
+            ready = Barrier(n)
+
+            def claim(_):
+                connection = sqlite3.connect(path, timeout=5)
+                try:
+                    ready.wait(timeout=5)
+                    return run(SQLiteAuditRepository(connection).consume_nonce(
+                        "tenant_a", "concurrent_shared_nonce", ts, ts + 60_000,
+                    ))
+                finally:
+                    connection.close()
+
+            with ThreadPoolExecutor(max_workers=n) as pool:
+                results = list(pool.map(claim, range(n)))
+            self.assertEqual(results.count(True), 1)
+            self.assertEqual(results.count(False), n - 1)
 
     def test_write_failure_never_returns_allow(self):
         class BrokenRepository:
