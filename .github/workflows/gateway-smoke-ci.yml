@@ -7,6 +7,8 @@ on:
       - 'src/agentshield/audit*.py'
       - 'migrations/**'
       - 'src/agentshield/identity.py'
+      - 'src/agentshield/demo_invoice.py'
+      - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -23,6 +25,8 @@ on:
       - 'src/agentshield/audit*.py'
       - 'migrations/**'
       - 'src/agentshield/identity.py'
+      - 'src/agentshield/demo_invoice.py'
+      - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -54,6 +58,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests/gateway -v
+      - name: Assert the no-network invoice injection demo
+        env:
+          PYTHONPATH: src
+        run: python scripts/demo_invoice_attack.py --assert-secure
 
   python-worker-d1-local:
     runs-on: ubuntu-latest
@@ -193,6 +201,25 @@ jobs:
           curl --fail --silent http://127.0.0.1:8787/_local/dashboard > /tmp/approval-dashboard.html
           grep -q 'Human review' /tmp/approval-dashboard.html
           echo 'Human approval workflow (operator JWT, D1 atomic review, evidence, one-time mock) verified locally.'
+          # A malicious invoice is data, not an authority to expand signed
+          # scopes. Both allowed read and denied write must be durably audited.
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/_local/demo/invoice-injection > /tmp/invoice-injection.json
+          python -c 'import json;d=json.load(open("/tmp/invoice-injection.json"));assert d["read_effect"]=="allow" and d["denied_effect"]=="deny" and d["denied_reasons"]==["REQUIRED_SCOPE_MISSING"] and d["invoice_reads"]==1 and d["supplier_writes"]==0 and not d["real_tool_called"] and d["jwt_verified_by_gateway"] and len(d["audit_event_ids"])==2'
+          # A broader agent scope would make the negative demo meaningless:
+          # it MUST fail, not silently run a high-impact mock tool.
+          status=$(curl --silent -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            http://127.0.0.1:8787/_local/demo/invoice-injection)
+          test "$status" = 403
+          # Only the trusted human operator can inspect the same tenant's
+          # sanitized decision records; never disclose invoice/PII.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/invoice-evidence > /tmp/invoice-evidence.json
+          python -c 'import json;d=json.load(open("/tmp/invoice-evidence.json"));assert d["scenario"]=="hostile_supplier_invoice_v1" and len(d["events"])==2 and set(x["effect"] for x in d["events"])=={"allow","deny"} and not d["source_document_included"]'
+          echo 'Invoice injection blocked: zero supplier writes, signed identity, two durable redacted D1 events.'
       - name: Print diagnostic on failure
         if: failure()
         run: |

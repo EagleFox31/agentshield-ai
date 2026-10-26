@@ -12,7 +12,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError, require_bearer,
 )
-from agentshield.approval_api import router as approval_router
+from agentshield.approval_api import router as approval_router, _identity as _verified_local_identity
+from agentshield.audit import AuditStorageError
+from agentshield.demo_invoice import run_invoice_attack
+import time
 from agentshield.audit import AuditEvent, action_digest
 from agentshield.audit_d1 import D1AuditRepository
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
@@ -213,3 +216,26 @@ async def local_audit_contract(request: Request) -> dict[str, object]:
         "nonce_once": True, "approval_once": True, "enforcement_ready": False,
         "executed": False,
     }
+
+
+@app.post("/_local/demo/invoice-injection")
+async def invoice_attack_demo(request: Request) -> dict[str, object]:
+    """Local-only, signed agent + durable D1 proof of zero supplier writes.
+
+    Requests provide NO principal, tool, scopes, or invoice text; only the
+    server-side synthetic fixture is evaluated by the existing PolicyEngine.
+    """
+    env = _require_local_smoke(request)
+    agent = _verified_local_identity(request, "AGENT")
+    try:
+        repository = D1AuditRepository(getattr(env, "DB", None))
+        report = await run_invoice_attack(
+            repository, agent.principal, agent.tenant_id,
+            occurred_at_ms=int(time.time() * 1000),
+        )
+    except AuditStorageError as exc:
+        raise HTTPException(status_code=503, detail="Security audit unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Demo requires a read-only invoice agent") from exc
+    return {**report.to_dict(), "jwt_verified_by_gateway": True,
+            "enforcement_ready": False, "hosted": False}

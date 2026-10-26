@@ -204,6 +204,17 @@ AgentShield now implements a **local-only human approval flow** using **separate
 
 See the [human approval walkthrough](docs/APPROVALS_LOCAL.md), [implementation](src/agentshield/approvals.py), [SQLite/D1 migration](migrations/0002_approval_review.sql) and [issue #12](https://github.com/EagleFox31/agentshield-ai/issues/12). There is **no hosted approval service or production decision/execution authorization** yet.
 
+## Fifth executable milestone — offline prompt-injection security demonstration
+
+The [hostile supplier-invoice demo](docs/DEMO_PROMPT_INJECTION.md) now exercises the **existing policy, audited decisions, signed local Worker identity and zero-side-effect tool mock** together. A retrieved invoice tells an agent to change a supplier's bank account; its trusted identity allows only invoice reading, so the tool call is **DENIED before mock dispatch** and the supplier-write invocation count stays **zero**.
+
+- **Offline CLI:** `PYTHONPATH=src python scripts/demo_invoice_attack.py --assert-secure` — reproducible without network, hosted resources or API keys.
+- **Cloudflare local integration:** authenticated `POST /_local/demo/invoice-injection` writes two privacy-minimized events to D1 locally; a tenant-scoped **Invoice attack evidence** view is available in the existing local human dashboard.
+- **Human approval comparison:** the separate synthetic agent with appropriate scope follows the previously implemented one-time approval flow. No real supplier modification occurs.
+- **Proof maturity:** event hashes are recorded, but **Merkle proof verification and EVM anchoring are not yet implemented**; no claim of universal prompt-injection interception, LLM test coverage or production security is made.
+
+See [scenario/tests](src/agentshield/demo_invoice.py), [issue #13](https://github.com/EagleFox31/agentshield-ai/issues/13) and the [existing threat model](docs/THREAT_MODEL.md).
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
