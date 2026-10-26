@@ -147,6 +147,41 @@ class SQLiteApprovalsTests(unittest.TestCase):
             {"fixture": "scenario-A"}, engine(cross_tenant), self.now + 280,
         )))
 
+    def test_rejected_action_never_consumes(self):
+        row = self.request()
+        self.assertTrue(run(review(
+            self.store, row.approval_id, "ci_local", "ci_local:reviewer-01",
+            "rejected", self.now + 100,
+        )))
+        self.assertFalse(run(consume_mock(
+            self.store, self.agent, row.approval_id, ACTION,
+            {"fixture": "scenario-A"}, engine(self.agent), self.now + 120,
+        )))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], 2)
+
+    def test_approved_expiry_preserves_review_and_logs_expiration(self):
+        row = self.request()
+        self.assertTrue(run(review(
+            self.store, row.approval_id, "ci_local", "ci_local:reviewer-01",
+            "approved", self.now + 100,
+        )))
+        original_id = self.db.execute(
+            "SELECT decision_id FROM approval_requests"
+        ).fetchone()[0]
+        self.assertTrue(run(expire_if_needed(
+            self.store, "ci_local", row.approval_id, self.now + 120_000,
+        )))
+        state, persisted_id = self.db.execute(
+            "SELECT state,decision_id FROM approval_requests"
+        ).fetchone()
+        self.assertEqual(state, "expired")
+        self.assertEqual(persisted_id, original_id)
+        self.assertFalse(run(consume_mock(
+            self.store, self.agent, row.approval_id, ACTION,
+            {"fixture": "scenario-A"}, engine(self.agent), self.now + 120_500,
+        )))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0], 3)
+
     def test_no_self_approval(self):
         row = self.request()
         with self.assertRaises(ApprovalRejected):
