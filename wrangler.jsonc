@@ -1,0 +1,13 @@
+{
+  "name": "agentshield-local-feasibility",
+  "main": "src/worker.py",
+  "compatibility_date": "2026-10-26",
+  "compatibility_flags": ["python_workers"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agentshield-local-only",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ]
+}

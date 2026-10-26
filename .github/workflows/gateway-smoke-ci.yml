@@ -1,0 +1,92 @@
+name: AgentShield FastAPI/D1 Local Compatibility
+
+on:
+  pull_request:
+    paths:
+      - 'src/agentshield/gateway.py'
+      - 'src/worker.py'
+      - 'tests/gateway/**'
+      - 'wrangler.jsonc'
+      - 'pyproject.toml'
+      - '.github/workflows/gateway-smoke-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/agentshield/gateway.py'
+      - 'src/worker.py'
+      - 'tests/gateway/**'
+      - 'wrangler.jsonc'
+      - 'pyproject.toml'
+      - '.github/workflows/gateway-smoke-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install HTTP smoke dependencies
+        run: python -m pip install -e . 'httpx>=0.28,<0.29'
+      - name: Run independent HTTP + fake-D1 regression suite
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests/gateway -v
+
+  python-worker-d1-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Enable local-only diagnostics without committing secrets
+        run: echo 'LOCAL_SMOKE_ENABLED=true' > .dev.vars
+      - name: Start local Pywrangler and probe FastAPI / D1 binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 120); do
+            if curl --fail --silent http://127.0.0.1:8787/health > /tmp/agentshield-health.json; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+              echo 'Pywrangler terminated before readiness.'
+              tail -80 /tmp/agentshield-pywrangler.log
+              exit 1
+            fi
+            sleep 2
+          done
+          if [[ "$ready" != 1 ]]; then
+            echo 'Pywrangler readiness timeout.'
+            tail -80 /tmp/agentshield-pywrangler.log
+            exit 1
+          fi
+          python -c 'import json; d=json.load(open("/tmp/agentshield-health.json")); assert d["enforcement_ready"] is False'
+          curl --fail --silent -H 'content-type: application/json' -d '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482"}' http://127.0.0.1:8787/_local/policy > /tmp/agentshield-policy.json
+          python -c 'import json; d=json.load(open("/tmp/agentshield-policy.json")); assert d["effect"]=="deny" and d["executed"] is False'
+          curl --fail --silent -X POST http://127.0.0.1:8787/_local/d1-smoke > /tmp/agentshield-d1.json
+          python -c 'import json; d=json.load(open("/tmp/agentshield-d1.json")); assert d["d1_local_probe"]=="ok" and d["persistent_audit_ready"] is False'
+          echo 'Local FastAPI ASGI, deterministic policy and local D1 binding passed.'
+      - name: Print diagnostic on failure
+        if: failure()
+        run: |
+          if [ -f /tmp/agentshield-pywrangler.log ]; then
+            sed -E 's/([Tt]oken|[Ss]ecret|[Pp]assword)=\S+/\1=[REDACTED]/g' /tmp/agentshield-pywrangler.log | tail -100
+          fi

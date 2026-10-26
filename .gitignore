@@ -1,0 +1,8 @@
+# Local Worker diagnostics and runtime state (never commit credentials)
+.dev.vars
+.dev.vars.*
+.wrangler/
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
