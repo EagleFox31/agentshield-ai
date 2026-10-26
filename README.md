@@ -225,6 +225,17 @@ AgentShield can now build **versioned, domain-separated SHA-256 Merkle batches**
 
 Run: `PYTHONPATH=src python scripts/demo_merkle_proofs.py --assert-secure`. See [issue #5](https://github.com/EagleFox31/agentshield-ai/issues/5) and [ADR-0006](docs/adr/0006-merkle-evm-proof-boundary.md).
 
+## Seventh executable milestone — hybrid threat triage (local)
+
+AgentShield now extracts **explainable, redacted prompt-injection and suspicious tool-sequence signals**, with a bounded **optional AI triage adapter interface**. A trusted `PolicyEngine` decision remains authoritative, including when an advisory model fails, returns a false reassurance or tries to issue permissions.
+
+- **Deterministic baseline:** versioned risk codes, opaque evidence references, an in-memory detection limit and tests covering suspicious documents, privilege escalation, repeated denied actions and tool-output poisoning.
+- **Measured limitations:** [16-case synthetic corpus](tests/fixtures/detection_v1.json), with deliberate false positives and missed attacks. [Evaluation script](scripts/evaluate_detection.py) reports a confusion matrix and local runtime overhead; **not production accuracy**.
+- **Optional model:** accepts **redacted signals only** and returns a strictly validated structured analyst hint with cited evidence. **No real AI provider is connected**, and no private document or model API key is transmitted.
+- **Demo:** the signed operator's local dashboard offers **Threat triage (rules only)**; the sample invoice remains `DENY`, with no real tool calls or cloud deployment.
+
+See [Hybrid detection & safety limits](docs/HYBRID_DETECTION.md), [advisory-only core](src/agentshield/detection.py), and [issue #4](https://github.com/EagleFox31/agentshield-ai/issues/4).
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
