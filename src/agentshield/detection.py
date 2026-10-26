@@ -93,6 +93,11 @@ class ThreatSignal:
     code: str
     severity: str
     evidence_ids: tuple[str, ...]
+    # A match is a triage hint; do not infer malicious intent or execution.
+    limitations: tuple[str, ...] = (
+        "heuristic_indicator_not_proof",
+        "tool_authorization_unaffected",
+    )
 
 
 @dataclass(frozen=True)
