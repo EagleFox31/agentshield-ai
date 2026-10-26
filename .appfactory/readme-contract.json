@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "name": "AgentShield AI",
+  "stage": "design",
+  "tagline": "Agents can reason. They should not self-authorize. Every privileged action needs an enforceable boundary.",
+  "problem": "Autonomous AI agents consume attacker-controlled material and sometimes translate text into privileged tool calls. Instructions hidden in retrieved documents must not acquire authorization merely because they appear in the agent's working context.",
+  "scenario": "An invoice-review assistant can read an untrusted payment document containing an instruction to alter supplier bank details. The user only delegated read access. The policy gateway must deny the write, regardless of the model's confidence.",
+  "differentiation": "AgentShield centers security on authenticated identity, scoped tool permissions and a deterministic policy decision at tool-execution time, rather than trusting a prompt classifier to make high-impact authorization decisions.",
+  "architecture": "Authenticated user intent -> AI agent -> Proposed tool call -> AgentShield deterministic policy -> Allow, Deny, Require approval -> Constrained tool adapter -> Redacted tamper-evident event log. Optional anchored batch hashes can aid verification.",
+  "limitations": "The project remains pre-alpha/design and has no shipped gateway, detection benchmark or external certification. Tools that bypass the gateway and malicious input that enters outside the defined trust boundary remain outside its protections.",
+  "capabilities": [
+    {
+      "name": "Deterministic policy gateway",
+      "description": "Enforce explicit scoped allow/deny/approval decisions before any intercepted tool execution.",
+      "status": "planned"
+    },
+    {
+      "name": "Prompt-injection and runtime triage",
+      "description": "Report observable suspicious context and tool requests without granting permissions from model output.",
+      "status": "planned"
+    },
+    {
+      "name": "Tamper-evident security evidence",
+      "description": "Maintain off-chain protected audit records with optional blockchain anchoring of batch fingerprints.",
+      "status": "planned"
+    }
+  ],
+  "roadmap": [
+    {
+      "name": "Threat model",
+      "exitCriteria": "Threat boundaries, sensitive assets and deny-by-default requirements reviewed with negative test cases."
+    },
+    {
+      "name": "Policy service",
+      "exitCriteria": "FastAPI contracts, deterministic policy and authorization test suite passing in CI."
+    },
+    {
+      "name": "Threat triage",
+      "exitCriteria": "Published attack fixtures, measured false positives and clearly bounded coverage claims."
+    },
+    {
+      "name": "Verifiable audit",
+      "exitCriteria": "Independent verifier detects event tampering with no secrets stored on a public blockchain."
+    }
+  ],
+  "references": [
+    {
+      "name": "OWASP Agentic Applications Top 10",
+      "url": "https://genai.owasp.org/2025/12/09/owasp-top-10-for-agentic-applications-the-benchmark-for-agentic-security-in-the-age-of-autonomous-ai/",
+      "relevance": "Agent identity, goal hijacking, tool misuse and human approval security boundaries."
+    },
+    {
+      "name": "MITRE ATLAS",
+      "url": "https://atlas.mitre.org/",
+      "relevance": "Adversarial AI behavior taxonomy used to structure attack fixtures."
+    },
+    {
+      "name": "NIST AI RMF",
+      "url": "https://www.nist.gov/publications/artificial-intelligence-risk-management-framework-generative-artificial-intelligence",
+      "relevance": "Risk governance and evaluation context for AI system lifecycle."
+    }
+  ],
+  "requiredHeadings": [
+    "The problem",
+    "How AgentShield is designed to work",
+    "Security controls",
+    "Delivery roadmap",
+    "Project status"
+  ],
+  "requiredTerms": [
+    "OWASP",
+    "MITRE",
+    "deny",
+    "approval",
+    "blockchain"
+  ],
+  "requiredFiles": [
+    "docs/THREAT_MODEL.md",
+    "docs/ARCHITECTURE.md",
+    "docs/CONTROL_MAPPING.md",
+    "SECURITY.md"
+  ]
+}
