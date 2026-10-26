@@ -1,0 +1,37 @@
+{
+  "project": {
+    "owner": "EagleFox31",
+    "title": "AgentShield AI Product Development",
+    "bootstrap": true,
+    "template": "appfactory-product",
+    "linkRepository": true,
+    "importOpenIssues": true,
+    "createBoardView": true
+  },
+  "bootstrap": {
+    "boardViewName": "AgentShield Board",
+    "phases": [
+      "Foundation",
+      "Policy Engine",
+      "Threat Detection",
+      "Audit & Proofs",
+      "Demo & Release"
+    ]
+  },
+  "metadataCommentKey": "agentshield-ai-project",
+  "fields": {
+    "status": "Status",
+    "priority": "Priority",
+    "workType": "Work type",
+    "phase": "Phase",
+    "size": "Size"
+  },
+  "workTypeByTitlePrefix": {
+    "[Security]": "Security",
+    "[Feature]": "Feature",
+    "[Engineering]": "Engineering",
+    "[Quality]": "Quality",
+    "[Documentation]": "Documentation",
+    "[Product]": "Product"
+  }
+}
