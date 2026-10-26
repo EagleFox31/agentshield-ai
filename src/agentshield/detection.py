@@ -44,7 +44,7 @@ _PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         r"(?:previous|earlier|prior|system|developer)\s+(?:instructions|rules|messages|prompts)\b")),
     ("ROLE_SPOOFING", "high", re.compile(
         r"\b(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+"
-        r"(?:the\s+|an?\s+)?(?:system|developer|administrator|admin|root)\b")),
+        r"(?:the\s+|an?\s+)?(?:system|developer|(?:finance\s+)?administrator|admin|root)\b")),
     ("PRIVILEGE_REQUEST", "high", re.compile(
         r"\b(?:claim|grant|add|assume|obtain|elevate)\s+"
         r"(?:the\s+|your\s+)?(?:scope|permission|privilege|role|admin)\b")),
