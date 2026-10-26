@@ -27,7 +27,7 @@ code{overflow-wrap:anywhere;color:#b5d8f4}pre{white-space:pre-wrap;overflow-wrap
 not accessible unless the local smoke flag is enabled. No JWT is stored or logged by this page.</p>
 <label for="jwt">Operator Bearer JWT</label>
 <input id="jwt" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a temporary operator JWT">
-<button id="load">Load approval requests</button><button id="injection-evidence" class="secondary">Invoice attack evidence</button><button id="clear" class="secondary">Clear token</button>
+<button id="load">Load approval requests</button><button id="injection-evidence" class="secondary">Invoice attack evidence</button><button id="merkle-evidence" class="secondary">Merkle snapshot (unanchored)</button><button id="clear" class="secondary">Clear token</button>
 <p role="status" aria-live="polite" id="status"></p>
 <section id="requests" aria-label="Approval requests"></section>
 <pre id="evidence" aria-label="Redacted audit evidence" hidden></pre>
@@ -85,6 +85,20 @@ document.getElementById("injection-evidence").addEventListener("click",async()=>
     evidence.textContent=JSON.stringify(result,null,2);
     evidence.hidden=false;
     status.textContent="Tenant-scoped invoice injection audit: "+result.events.length+" event(s).";
+  }catch(e){status.textContent=e.message}
+});
+document.getElementById("merkle-evidence").addEventListener("click",async()=>{
+  try{
+    const result=await api("/_local/demo/merkle-batch");
+    evidence.textContent=JSON.stringify({
+      note:"Locally computed, NOT independently anchored or on-chain verified",
+      commitment:result.manifest.commitment,
+      event_count:result.manifest.count,
+      verification_status:result.verification_status,
+      onchain_verified:result.onchain_verified
+    },null,2);
+    evidence.hidden=false;
+    status.textContent="Merkle batch: "+result.manifest.count+" events. UNANCHORED local snapshot.";
   }catch(e){status.textContent=e.message}
 });
 document.getElementById("load").addEventListener("click",load);
