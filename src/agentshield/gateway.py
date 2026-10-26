@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError, require_bearer,
 )
+from agentshield.audit import AuditEvent, action_digest
+from agentshield.audit_d1 import D1AuditRepository
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
 
 app = FastAPI(
@@ -128,3 +130,70 @@ async def local_d1_smoke(request: Request) -> dict[str, object]:
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Local D1 query failed") from exc
     return {"d1_local_probe": "ok", "persistent_audit_ready": False}
+
+
+@app.post("/_local/audit-contract")
+async def local_audit_contract(request: Request) -> dict[str, object]:
+    """Integration probe for local D1 migrations, event dedup and nonce races.
+
+    This route is NOT authenticated and therefore must remain strictly local
+    with LOCAL_SMOKE_ENABLED=true. It never executes tools or signs approvals.
+    """
+    env = _require_local_smoke(request)
+    database = getattr(env, "DB", None)
+    if database is None:
+        raise HTTPException(status_code=503, detail="Local audit D1 unavailable")
+    repository = D1AuditRepository(database)
+    event = AuditEvent(
+        event_id="local-audit-contract-0001",
+        tenant_id="ci_local", principal_id="ci_local:demo_agent",
+        action_digest=action_digest(
+            "suppliers", "update_bank_account", "supplier/482",
+        ), effect="deny", reason_codes=("NO_MATCHING_POLICY",),
+        policy_version="policy-v1", occurred_at_ms=1_790_000_000_000,
+        retention_until_ms=1_790_000_000_000 + 30 * 86_400_000,
+    )
+    try:
+        await repository.record_event(event)
+        replay_created = await repository.record_event(event)
+        stored = await repository.get_event("ci_local", event.event_id)
+        other_tenant = await repository.get_event("other_tenant", event.event_id)
+        import secrets
+        nonce = "local_" + secrets.token_hex(12)
+        first = await repository.consume_nonce(
+            "ci_local", nonce, 1_790_000_000_000, 1_790_000_060_000,
+        )
+        again = await repository.consume_nonce(
+            "ci_local", nonce, 1_790_000_000_000, 1_790_000_060_000,
+        )
+        # This approved state is a synthetic local DB fixture only; no
+        # approver identity or public approval API is implemented here.
+        approval_id = "local_approval_" + secrets.token_hex(12)
+        await database.prepare(
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,"
+            "state,expires_at_ms,created_at_ms) VALUES (?,?,?,?,?,?,?,?)"
+        ).bind(
+            approval_id, "ci_local", "ci_local:demo_agent", event.action_digest,
+            "policy-v1", "approved", 1_790_000_060_000, 1_790_000_000_000,
+        ).run()
+        wrong = await repository.consume_approved_request(
+            "other_tenant", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        consumed = await repository.consume_approved_request(
+            "ci_local", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        consumed_again = await repository.consume_approved_request(
+            "ci_local", approval_id, event.action_digest, 1_790_000_010_000,
+        )
+        if (stored != event or other_tenant is not None or replay_created
+            or not first or again or wrong or not consumed or consumed_again):
+            raise RuntimeError("Local audit contract mismatch")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Local audit contract failed") from exc
+    return {
+        "d1_audit_contract": "ok", "redacted_event_hash": event.fingerprint,
+        "tenant_isolated": True, "event_idempotent": True,
+        "nonce_once": True, "approval_once": True, "enforcement_ready": False,
+        "executed": False,
+    }
