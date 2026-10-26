@@ -269,17 +269,21 @@ async def expire_if_needed(
     marker = _id("expire")
     event = _event(tenant, tenant + ":system", previous.action_digest,
                    "HUMAN_APPROVAL_EXPIRED", now_ms)
-    # decision_id identifies an expiry transition. Only unreviewed pending
-    # approvals can expire here; approved expiry is enforced by consume().
-    if previous.state != "pending":
-        return False
+    # An approved grant may expire too; preserve its human decision_id
+    # while binding expiration through the separate consumption marker.
+    marker_column = "decision_id" if previous.state == "pending" else "consume_event_id"
+    assert marker_column in ("decision_id", "consume_event_id")
     await store.atomic([
-        ("UPDATE approval_requests SET state='expired',decision_id=? "
-         "WHERE approval_id=? AND tenant_id=? AND state='pending' AND expires_at_ms<=?",
-         (marker, approval_id, tenant, now_ms)),
-        _audit_if_transition(approval_id, "decision_id", marker, "expired", event),
+        (f"UPDATE approval_requests SET state='expired',{marker_column}=? "
+         "WHERE approval_id=? AND tenant_id=? AND state=? AND expires_at_ms<=?",
+         (marker, approval_id, tenant, previous.state, now_ms)),
+        _audit_if_transition(approval_id, marker_column, marker, "expired", event),
     ])
-    return True
+    final = await store.first(
+        f"SELECT {marker_column},state FROM approval_requests WHERE approval_id=? AND tenant_id=?",
+        (approval_id, tenant),
+    )
+    return bool(final and final[marker_column] == marker and final["state"] == "expired")
 
 
 async def consume_mock(
