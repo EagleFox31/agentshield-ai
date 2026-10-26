@@ -43,3 +43,19 @@ This repository follows [RAIDER failure-memory requirements](https://github.com/
 **RAIDER lesson:** Versions must be evaluated against the **target runtime wheel index** when shipping native/compiled security libraries on the edge. Always test cryptographic outcomes end-to-end under the production-shaped runtime and keep error-precedence unit tests semantically correct.
 
 **Limit:** Local cryptographic verification does not imply the service is deployed, that replayed access tokens are blocked, or that a production identity provider/key rotation system exists.
+
+## LESSON-2026-003 — A prompt-injection signature missed the actual invoice syntax
+
+**Date:** 2026-10-26  
+**Category:** Security detector evaluation / RAIDER test design  
+**Scope:** [AgentShield #4](https://github.com/EagleFox31/agentshield-ai/issues/4), [PR #21](https://github.com/EagleFox31/agentshield-ai/pull/21)
+
+**Symptom:** The 16-case curated corpus and static model-safety tests passed, but the existing realistic invoice fixture triggered a failing security regression: the `INSTRUCTION_OVERRIDE` heuristic did not match `IGNORE THE USER AND ALL EARLIER RULES`, although it matched `ignore earlier rules`.
+
+**Root cause:** The regular expression only allowed an optional `all` before `earlier rules` and was overly tied to the precise phrasing in the curated corpus. It missed an additional clause common in actual injection attempts.
+
+**Correction:** Support the intervening `the user and` clause, preserve canonical normalization and report only rule codes/evidence references. Do **not** change authorization to rely on the heuristic; `PolicyEngine` still denies without `supplier:write` even if the detector misses an attack.
+
+**Regression and limitations:** Keep an adversarial test tied to the **existing invoice fixture**, separate from curated detector cases; CI exercises all 85 gateway/security tests and a real local Python Worker. The corpus intentionally retains a **false negative and a false positive**. Avoid invented claims that regular-expression prompt injection detection is robust or comprehensive.
+
+**RAIDER lesson:** Test detectors against evolving end-to-end source/attack fixtures and adverse paraphrases, not only against keyword examples selected to make the detector look good. Track false positives and false negatives explicitly; authorization must remain a separate fail-closed control.
