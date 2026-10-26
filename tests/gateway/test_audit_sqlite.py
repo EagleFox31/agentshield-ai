@@ -153,5 +153,38 @@ class AuditSQLiteTests(unittest.TestCase):
                 run(self.repo.consume_nonce("tenant_a", bad, 1_790_000_000_000, 1_790_000_060_000))
 
 
+    def test_approval_is_bound_to_tenant_digest_expiry_and_single_use(self):
+        digest = sample().action_digest
+        self.db.execute(
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,state,expires_at_ms,created_at_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("approval_fixture_0001", "tenant_a", "tenant_a:agent-01", digest,
+             "baseline-v1", "approved", 1_790_000_060_000, 1_790_000_000_000),
+        )
+        self.db.commit()
+        consume = lambda tenant, d, at: run(self.repo.consume_approved_request(
+            tenant, "approval_fixture_0001", d, at,
+        ))
+        self.assertFalse(consume("tenant_b", digest, 1_790_000_010_000))
+        self.assertFalse(consume("tenant_a", "0" * 64, 1_790_000_010_000))
+        self.assertTrue(consume("tenant_a", digest, 1_790_000_010_000))
+        self.assertFalse(consume("tenant_a", digest, 1_790_000_010_000))
+
+    def test_expired_approval_is_not_consumable(self):
+        digest = sample().action_digest
+        self.db.execute(
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,state,expires_at_ms,created_at_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("approval_expired_001", "tenant_a", "tenant_a:agent-01", digest,
+             "baseline-v1", "approved", 1_790_000_010_000, 1_790_000_000_000),
+        )
+        self.db.commit()
+        self.assertFalse(run(self.repo.consume_approved_request(
+            "tenant_a", "approval_expired_001", digest, 1_790_000_010_000,
+        )))
+
+
 if __name__ == "__main__":
     unittest.main()
