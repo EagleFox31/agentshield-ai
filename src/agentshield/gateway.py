@@ -8,6 +8,9 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from agentshield.identity import (
+    AgentAuthenticationError, IdentityConfigurationError, require_bearer,
+)
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
 
 app = FastAPI(
@@ -51,6 +54,38 @@ async def health() -> dict[str, object]:
     return {
         "status": "alive", "mode": "experimental",
         "enforcement_ready": False, "audit_ready": False,
+    }
+
+
+@app.get("/v1/identity")
+async def authenticated_agent_identity(request: Request) -> dict[str, object]:
+    """Read-only authentication proof; cannot authorize or execute tools.
+
+    All privileged decisions will require the audit and enforcement work in
+    issues #11/#12. Caller-provided JSON never supplies identity/scopes.
+    """
+    env = request.scope.get("env")
+    configuration = {
+        name: str(getattr(env, name, "") or "")
+        for name in ("AGENT_JWT_ISSUER", "AGENT_JWT_AUDIENCE", "AGENT_JWKS_JSON")
+    }
+    try:
+        result = require_bearer(request.headers.get("authorization"), configuration)
+    except IdentityConfigurationError as exc:
+        raise HTTPException(status_code=503, detail="Agent verifier unavailable") from exc
+    except AgentAuthenticationError as exc:
+        raise HTTPException(
+            status_code=401, detail="Invalid agent credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    return {
+        "agent_id": result.agent_id,
+        "tenant_id": result.tenant_id,
+        "scopes": sorted(result.principal.scopes),
+        "expires_at": result.expires_at,
+        "authenticated": True,
+        "enforcement_ready": False,
+        "executed": False,
     }
 
 
