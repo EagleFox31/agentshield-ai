@@ -16,3 +16,12 @@ classifiers = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Optional adapter dependencies: pure PolicyEngine remains dependency-free.
+[project.optional-dependencies]
+gateway = ["fastapi>=0.128,<0.129"]
+
+# Only the local Worker compatibility job installs these development tools.
+[dependency-groups]
+worker = ["workers-py", "workers-runtime-sdk"]
+
