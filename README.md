@@ -183,6 +183,16 @@ The gateway now includes a **read-only** authenticated identity endpoint, `GET /
 
 This capability is tracked under [issue #10](https://github.com/EagleFox31/agentshield-ai/issues/10) and [PR #15](https://github.com/EagleFox31/agentshield-ai/pull/15). **A valid token proves caller identity for this read-only endpoint; it does not grant execution permission.**
 
+## Third executable milestone — durable audit foundation (prototype)
+
+AgentShield now has a **portable audit repository** and versioned SQLite/D1 schema for redacted policy decisions, tenant-scoped reads, immutable event-ID deduplication, and at-most-once nonce/approved-request state transitions. A real **local Cloudflare Python Worker + D1** integration test applies the migration and verifies those behaviours. The previously implemented JWT and policy tests remain independent.
+
+- **Code:** [pure audit contract](src/agentshield/audit.py), [SQLite adapter](src/agentshield/audit_sqlite.py), [D1 Worker adapter](src/agentshield/audit_d1.py), and [fail-closed decision sequencing](src/agentshield/audit_service.py).
+- **Migration and safety:** [portable schema](migrations/0001_audit_core.sql) · [data minimization and limits](docs/AUDIT_D1.md).
+- **Important boundary:** this is not yet a deployed, independently immutable audit service. Actual protected tool execution, authenticated human approval issuance, combined approval/audit transactions, retention cleanup and Merkle proof anchoring remain separate deliverables.
+
+[Implementation issue #11](https://github.com/EagleFox31/agentshield-ai/issues/11) · [PR #16](https://github.com/EagleFox31/agentshield-ai/pull/16).
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
