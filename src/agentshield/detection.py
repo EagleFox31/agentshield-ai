@@ -40,7 +40,7 @@ _SUMMARIES = {
 # rules, and matches do not prove intent or a successful prompt injection.
 _PATTERNS: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     ("INSTRUCTION_OVERRIDE", "high", re.compile(
-        r"\b(?:ignore|disregard|override)\s+(?:all\s+)?"
+        r"\b(?:ignore|disregard|override)\s+(?:the\s+user\s+and\s+)?(?:all\s+)?"
         r"(?:previous|earlier|prior|system|developer)\s+(?:instructions|rules|messages|prompts)\b")),
     ("ROLE_SPOOFING", "high", re.compile(
         r"\b(?:you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+"
