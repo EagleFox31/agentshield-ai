@@ -201,6 +201,29 @@ async def demo_consume(approval_id: str, body: DemoAction, request: Request):
             "simulated_execution": True, "real_tool_called": False}
 
 
+
+
+@router.get("/_local/demo/invoice-evidence")
+async def operator_invoice_attack_evidence(request: Request):
+    """Tenant-bound read of redacted demo decisions; no raw hostile document."""
+    operator = _identity(request, "OPERATOR", "approvals:read")
+    store = _store(request)
+    try:
+        rows = await store.many(
+            "SELECT event_id,event_sha256,effect,reason_codes_json,occurred_at_ms "
+            "FROM audit_events WHERE tenant_id=? AND policy_version=? "
+            "ORDER BY occurred_at_ms DESC LIMIT 30",
+            (operator.tenant_id, "demo-fixture-policy-v1"),
+        )
+    except AuditStorageError as exc:
+        raise HTTPException(status_code=503, detail="Demo audit unavailable") from exc
+    return {
+        "scenario": "hostile_supplier_invoice_v1",
+        "events": rows,
+        "evidence_independent_anchoring": False,
+        "source_document_included": False,
+    }
+
 @router.get("/_local/dashboard", response_class=HTMLResponse)
 async def local_dashboard(request: Request):
     _local_env(request)
