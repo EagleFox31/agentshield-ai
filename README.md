@@ -193,6 +193,17 @@ AgentShield now has a **portable audit repository** and versioned SQLite/D1 sche
 
 [Implementation issue #11](https://github.com/EagleFox31/agentshield-ai/issues/11) · [PR #16](https://github.com/EagleFox31/agentshield-ai/pull/16).
 
+## Fourth executable milestone — human approvals (local prototype)
+
+AgentShield now implements a **local-only human approval flow** using **separate operator and agent ES256 identities**. A minimal browser dashboard and loopback-only CLI share the same authenticated API, backed by SQLite/D1 transactions for pending requests, human review, expiration and one-time consumption.
+
+- **Policy first:** the existing deterministic engine must return `require_approval` before a review request is created; `deny` never becomes `allow` by human fiat.
+- **Exact grant:** tenant, actor, scopes, policy version, target and synthetic arguments are hashed together, so changing them invalidates the grant. Operators cannot use an agent JWT to approve.
+- **Durable review:** state transition and a redacted per-approval audit record are atomic in SQLite/D1; replay, concurrent decisions and storage failure are rejected.
+- **Demonstration only:** `/_local/demo/` consumes the grant and reports a **mock simulation**, without calling any real tool. All dashboard and review APIs require an explicit local-only development flag.
+
+See the [human approval walkthrough](docs/APPROVALS_LOCAL.md), [implementation](src/agentshield/approvals.py), [SQLite/D1 migration](migrations/0002_approval_review.sql) and [issue #12](https://github.com/EagleFox31/agentshield-ai/issues/12). There is **no hosted approval service or production decision/execution authorization** yet.
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
