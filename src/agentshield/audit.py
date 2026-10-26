@@ -115,6 +115,19 @@ def validate_nonce(tenant_id: str, nonce: str, used_at_ms: int, expires_at_ms: i
         raise ValueError("Nonce expiry must be within 5 minutes")
 
 
+def action_digest(tool: str, operation: str, resource: str) -> str:
+    """Hash a bounded normalized request target without persisting identifiers."""
+    values = (tool, operation, resource)
+    if any(not isinstance(value, str) or not value or len(value) > 256 for value in values):
+        raise ValueError("Invalid canonical action fields")
+    encoded = json.dumps(
+        {"schema": "agentshield.action.v1", "tool": tool,
+         "operation": operation, "resource": resource},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def decode_event(row: dict) -> AuditEvent:
     """Reconstitute immutable event and validate its stored fingerprint."""
     try:
