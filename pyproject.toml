@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentshield-ai"
+version = "0.1.0a0"
+description = "Policy-first security primitives for AI agent tool authorization"
+requires-python = ">=3.11"
+authors = [{name = "Jennifer Lawrynn"}]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
