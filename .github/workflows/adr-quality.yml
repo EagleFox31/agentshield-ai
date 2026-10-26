@@ -1,0 +1,38 @@
+name: Architecture Decision Contract
+
+on:
+  pull_request:
+    paths:
+      - 'docs/adr/**'
+      - 'docs/MVP_SCOPE.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'scripts/validate_adr_docs.py'
+      - '.github/workflows/adr-quality.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/adr/**'
+      - 'docs/MVP_SCOPE.md'
+      - 'docs/ARCHITECTURE.md'
+      - 'scripts/validate_adr_docs.py'
+      - '.github/workflows/adr-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-adr-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit ADR/MVP and relative links
+        run: python scripts/validate_adr_docs.py
