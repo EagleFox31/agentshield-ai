@@ -34,6 +34,8 @@ class DetectorTests(unittest.TestCase):
                 self.assertFalse(incomplete)
                 self.assertTrue(set(item["expected_codes"]).issubset({s.code for s in signals}))
                 self.assertTrue(all(s.evidence_ids == (item["id"],) for s in signals))
+                self.assertTrue(all("heuristic_indicator_not_proof" in s.limitations for s in signals))
+                self.assertTrue(all("tool_authorization_unaffected" in s.limitations for s in signals))
 
     def test_invoice_attack_detects_override_escalation_and_role_spoof(self):
         from agentshield.demo_invoice import INVOICE_TEXT
