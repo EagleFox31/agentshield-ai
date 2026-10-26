@@ -33,5 +33,37 @@
     "[Quality]": "Quality",
     "[Documentation]": "Documentation",
     "[Product]": "Product"
+  },
+  "issueOverrides": {
+    "1": {
+      "priority": "P0",
+      "workType": "Security",
+      "phase": "Foundation",
+      "size": "M"
+    },
+    "2": {
+      "priority": "P0",
+      "workType": "Engineering",
+      "phase": "Foundation",
+      "size": "M"
+    },
+    "3": {
+      "priority": "P0",
+      "workType": "Feature",
+      "phase": "Policy Engine",
+      "size": "L"
+    },
+    "4": {
+      "priority": "P1",
+      "workType": "Security",
+      "phase": "Threat Detection",
+      "size": "L"
+    },
+    "5": {
+      "priority": "P1",
+      "workType": "Security",
+      "phase": "Audit & Proofs",
+      "size": "L"
+    }
   }
 }
