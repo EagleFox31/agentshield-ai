@@ -53,14 +53,49 @@ def main() -> None:
             signer, algorithm="ES256", headers={"kid": "ci-ephemeral-key-1"},
         ),
     }
+    # Separate issuer, audience and public signing key for the human.
+    operator_signer = ec.generate_private_key(ec.SECP256R1())
+    operator_coords = operator_signer.public_key().public_numbers()
+    operator_public_jwk = {
+        "kid": "ci-operator-key-1", "kty": "EC", "crv": "P-256",
+        "alg": "ES256", "use": "sig", "key_ops": ["verify"],
+        "x": b64u(operator_coords.x), "y": b64u(operator_coords.y),
+    }
+    operator_issuer = "https://operators.test.example"
+    operator_audience = "urn:agentshield:operators"
+    operator_claims = {
+        **claims, "iss": operator_issuer, "aud": operator_audience,
+        "sub": "reviewer-01", "scope": "approvals:read approvals:decide",
+        "jti": "operator-ci-token-123",
+    }
+    tokens["approval_agent"] = jwt.encode(
+        {**claims, "scope": "invoice:read supplier:write",
+         "jti": "approval-agent-token-123"},
+        signer, algorithm="ES256", headers={"kid": "ci-ephemeral-key-1"},
+    )
+    tokens["operator_valid"] = jwt.encode(
+        operator_claims, operator_signer, algorithm="ES256",
+        headers={"kid": "ci-operator-key-1"},
+    )
+    tokens["operator_readonly"] = jwt.encode(
+        {**operator_claims, "scope": "approvals:read",
+         "jti": "operator-readonly-token-123"},
+        operator_signer, algorithm="ES256",
+        headers={"kid": "ci-operator-key-1"},
+    )
+
     for name, token in tokens.items():
         (OUTPUT / f"{name}.txt").write_text(token, encoding="utf-8")
     jwks = json.dumps({"keys": [public_jwk]}, separators=(",", ":"))
+    operator_jwks = json.dumps({"keys": [operator_public_jwk]}, separators=(",", ":"))
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"
         f'AGENT_JWT_ISSUER="{ISSUER}"\n'
         f'AGENT_JWT_AUDIENCE="{AUDIENCE}"\n'
-        f"AGENT_JWKS_JSON='{jwks}'\n",
+        f"AGENT_JWKS_JSON='{jwks}'\n"
+        f'OPERATOR_JWT_ISSUER="{operator_issuer}"\n'
+        f'OPERATOR_JWT_AUDIENCE="{operator_audience}"\n'
+        f"OPERATOR_JWKS_JSON='{operator_jwks}'\n",
         encoding="utf-8",
     )
     print("Prepared ephemeral ES256 fixtures and local-only public JWK configuration.")

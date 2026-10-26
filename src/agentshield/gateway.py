@@ -6,11 +6,13 @@ execution remain out of scope until their security gates pass.
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError, require_bearer,
 )
+from agentshield.approval_api import router as approval_router
 from agentshield.audit import AuditEvent, action_digest
 from agentshield.audit_d1 import D1AuditRepository
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
@@ -22,6 +24,20 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+# All approval endpoints require explicit local mode; do not deploy these routes.
+app.include_router(approval_router)
+
+@app.middleware("http")
+async def deny_disabled_local_paths(request: Request, call_next):
+    """Before request-body validation, suppress local-only route visibility."""
+    if request.url.path.startswith("/_local/"):
+        env = request.scope.get("env")
+        if env is None or getattr(env, "LOCAL_SMOKE_ENABLED", None) != "true":
+            return Response(status_code=404, headers={"Cache-Control": "no-store"})
+    return await call_next(request)
+
 
 
 class LocalAction(BaseModel):
