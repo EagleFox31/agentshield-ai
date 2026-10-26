@@ -85,5 +85,26 @@ class D1ContractTests(unittest.TestCase):
             run(D1AuditRepository(BadBinding()).record_event(sample()))
 
 
+    def test_d1_approval_consumption_uses_single_conditional_update(self):
+        digest = sample().action_digest
+        self.connection.execute(
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,state,expires_at_ms,created_at_ms) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            ("approval_d1_fixture", "tenant_a", "tenant_a:agent-01", digest,
+             "baseline-v1", "approved", 1_790_000_060_000, 1_790_000_000_000),
+        )
+        self.connection.commit()
+        self.assertFalse(run(self.repo.consume_approved_request(
+            "tenant_b", "approval_d1_fixture", digest, 1_790_000_010_000,
+        )))
+        self.assertTrue(run(self.repo.consume_approved_request(
+            "tenant_a", "approval_d1_fixture", digest, 1_790_000_010_000,
+        )))
+        self.assertFalse(run(self.repo.consume_approved_request(
+            "tenant_a", "approval_d1_fixture", digest, 1_790_000_010_000,
+        )))
+
+
 if __name__ == "__main__":
     unittest.main()
