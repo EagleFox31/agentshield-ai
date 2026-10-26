@@ -93,6 +93,12 @@ class AuditRepository(Protocol):
         """Return True on first insert, False on exact retry; conflict fails closed."""
         ...
 
+    async def consume_approved_request(
+        self, tenant_id: str, approval_id: str, action_digest: str, now_ms: int,
+    ) -> bool:
+        """Atomic conditional state change; not a standalone execution grant."""
+        ...
+
     async def get_event(self, tenant_id: str, event_id: str) -> AuditEvent | None:
         """Tenant-scoped read, never return another tenant's event."""
         ...
@@ -158,6 +164,26 @@ FETCH_EVENT_SQL = (
     "FROM audit_events WHERE event_id=? AND tenant_id=?"
 )
 FINGERPRINT_SQL = "SELECT event_sha256,tenant_id FROM audit_events WHERE event_id=?"
+CONSUME_APPROVAL_SQL = (
+    "UPDATE approval_requests SET state='consumed',consumed_at_ms=? "
+    "WHERE approval_id=? AND tenant_id=? AND action_digest=? "
+    "AND state='approved' AND expires_at_ms>? RETURNING approval_id"
+)
+
+
+def validate_approval(
+    tenant_id: str, approval_id: str, digest: str, now_ms: int,
+) -> None:
+    if not isinstance(tenant_id, str) or not _TENANT.fullmatch(tenant_id):
+        raise ValueError("Invalid tenant")
+    if not isinstance(approval_id, str) or not _ID.fullmatch(approval_id):
+        raise ValueError("Invalid approval ID")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise ValueError("Invalid action digest")
+    if type(now_ms) is not int or now_ms <= 0:
+        raise ValueError("Invalid approval evaluation timestamp")
+
+
 INSERT_NONCE_SQL = (
     "INSERT INTO used_action_nonces (tenant_id,nonce,used_at_ms,expires_at_ms) "
     "VALUES (?,?,?,?) ON CONFLICT(tenant_id,nonce) DO NOTHING RETURNING nonce"
