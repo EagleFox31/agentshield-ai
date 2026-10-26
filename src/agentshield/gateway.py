@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError, require_bearer,
 )
+from agentshield.approval_api import router as approval_router
 from agentshield.audit import AuditEvent, action_digest
 from agentshield.audit_d1 import D1AuditRepository
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
@@ -22,6 +23,10 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+
+# All approval endpoints require explicit local mode; do not deploy these routes.
+app.include_router(approval_router)
 
 
 class LocalAction(BaseModel):
