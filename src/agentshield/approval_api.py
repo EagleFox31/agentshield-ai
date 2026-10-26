@@ -173,9 +173,9 @@ async def operator_audit(approval_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Unknown approval")
         items = await store.many(
             "SELECT event_id,tenant_id,event_sha256,reason_codes_json,occurred_at_ms "
-            "FROM audit_events WHERE tenant_id=? AND action_digest=? "
+            "FROM audit_events WHERE tenant_id=? AND approval_id=? "
             "ORDER BY occurred_at_ms DESC LIMIT 25",
-            (operator.tenant_id, row.action_digest),
+            (operator.tenant_id, approval_id),
         )
     except AuditStorageError as exc:
         raise HTTPException(status_code=503, detail="Audit read failed") from exc
