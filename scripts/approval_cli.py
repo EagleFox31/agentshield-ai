@@ -28,7 +28,12 @@ def api(base: str, token: str, path: str, method: str = "GET") -> dict:
         method=method,
         headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=10) as response:
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise ValueError("Redirect blocked: operator token must remain on loopback")
+
+    opener = urllib.request.build_opener(NoRedirect)
+    with opener.open(request, timeout=10) as response:
         return json.load(response)
 
 
