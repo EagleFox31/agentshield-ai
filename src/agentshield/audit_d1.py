@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from agentshield.audit import (
     AuditConflict, AuditEvent, AuditStorageError, FETCH_EVENT_SQL,
-    FINGERPRINT_SQL, INSERT_EVENT_SQL, INSERT_NONCE_SQL, decode_event,
-    event_arguments, validate_nonce,
+    CONSUME_APPROVAL_SQL, FINGERPRINT_SQL, INSERT_EVENT_SQL, INSERT_NONCE_SQL, decode_event,
+    event_arguments, validate_approval, validate_nonce,
 )
 
 
@@ -51,6 +51,16 @@ class D1AuditRepository:
         ):
             raise AuditConflict("Immutable event ID collision")
         return inserted is not None
+
+    async def consume_approved_request(
+        self, tenant_id: str, approval_id: str, action_digest: str, now_ms: int,
+    ) -> bool:
+        validate_approval(tenant_id, approval_id, action_digest, now_ms)
+        row = await self._first(
+            CONSUME_APPROVAL_SQL,
+            (now_ms, approval_id, tenant_id, action_digest, now_ms),
+        )
+        return row is not None
 
     async def get_event(self, tenant_id: str, event_id: str) -> AuditEvent | None:
         row = await self._first(FETCH_EVENT_SQL, (event_id, tenant_id))
