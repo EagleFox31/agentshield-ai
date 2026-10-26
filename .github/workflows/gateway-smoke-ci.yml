@@ -8,6 +8,10 @@ on:
       - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
+      - 'src/agentshield/merkle.py'
+      - 'scripts/demo_merkle_proofs.py'
+      - 'scripts/verify_merkle.py'
+      - 'contracts/AuditRootRegistry.sol'
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/approvals.py'
@@ -26,6 +30,10 @@ on:
       - 'migrations/**'
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
+      - 'src/agentshield/merkle.py'
+      - 'scripts/demo_merkle_proofs.py'
+      - 'scripts/verify_merkle.py'
+      - 'contracts/AuditRootRegistry.sol'
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/approvals.py'
@@ -62,6 +70,10 @@ jobs:
         env:
           PYTHONPATH: src
         run: python scripts/demo_invoice_attack.py --assert-secure
+      - name: Assert Merkle inclusion and history-tampering regressions offline
+        env:
+          PYTHONPATH: src
+        run: python scripts/demo_merkle_proofs.py --assert-secure
 
   python-worker-d1-local:
     runs-on: ubuntu-latest
@@ -220,6 +232,17 @@ jobs:
             http://127.0.0.1:8787/_local/demo/invoice-evidence > /tmp/invoice-evidence.json
           python -c 'import json;d=json.load(open("/tmp/invoice-evidence.json"));assert d["scenario"]=="hostile_supplier_invoice_v1" and len(d["events"])==2 and set(x["effect"] for x in d["events"])=={"allow","deny"} and not d["source_document_included"]'
           echo 'Invoice injection blocked: zero supplier writes, signed identity, two durable redacted D1 events.'
+          # Merkle roots are computed from actual D1 event rows, not fake
+          # in-memory objects. The human operator is a separate signed actor.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/merkle-batch > /tmp/merkle-d1.json
+          python -c 'import json;d=json.load(open("/tmp/merkle-d1.json"));assert d["manifest"]["count"]==2 and d["verification_status"]=="consistent_unanchored" and not d["onchain_verified"] and len(d["inclusion_paths"])==2'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/_local/demo/merkle-batch)
+          test "$status" = 401
+          echo 'Actual D1 audit entries batched into an UNANCHORED Merkle snapshot, operator-only.'
       - name: Print diagnostic on failure
         if: failure()
         run: |

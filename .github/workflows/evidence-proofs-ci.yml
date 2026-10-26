@@ -1,0 +1,63 @@
+name: AgentShield Merkle and EVM Source Quality
+
+on:
+  pull_request:
+    paths:
+      - 'src/agentshield/merkle.py'
+      - 'scripts/verify_merkle.py'
+      - 'scripts/demo_merkle_proofs.py'
+      - 'tests/gateway/test_merkle*.py'
+      - 'contracts/**'
+      - '.github/workflows/evidence-proofs-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/agentshield/merkle.py'
+      - 'scripts/verify_merkle.py'
+      - 'scripts/demo_merkle_proofs.py'
+      - 'tests/gateway/test_merkle*.py'
+      - 'contracts/**'
+      - '.github/workflows/evidence-proofs-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-verifier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Merkle source lint and compile
+        run: python -m compileall -q src scripts tests/gateway
+      - name: Run independent adversarial proof suite
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests/gateway -p 'test_merkle*.py' -v
+      - name: Run purely offline SQLite tamper-evidence demo
+        env:
+          PYTHONPATH: src
+        run: python scripts/demo_merkle_proofs.py --assert-secure
+
+  compile-undeployed-solidity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compile contract locally, never broadcast or deploy
+        run: |
+          mkdir -p /tmp/agentshield-solidity
+          npx --yes solc@0.8.24 --bin --abi contracts/AuditRootRegistry.sol --output-dir /tmp/agentshield-solidity
+          find /tmp/agentshield-solidity -type f | grep -q '\.abi$'
+          find /tmp/agentshield-solidity -type f | grep -q '\.bin$'

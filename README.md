@@ -215,6 +215,16 @@ The [hostile supplier-invoice demo](docs/DEMO_PROMPT_INJECTION.md) now exercises
 
 See [scenario/tests](src/agentshield/demo_invoice.py), [issue #13](https://github.com/EagleFox31/agentshield-ai/issues/13) and the [existing threat model](docs/THREAT_MODEL.md).
 
+## Sixth executable milestone — Merkle audit integrity (offline)
+
+AgentShield can now build **versioned, domain-separated SHA-256 Merkle batches** from existing redacted audit events, generate individual inclusion paths and verify complete batches or chained manifests with an **independently supplied trusted commitment**. The [offline proof walkthrough](docs/MERKLE_EVM_PROOFS.md) includes CLI verifier commands, tampering/omission/reorder tests and a demonstration reading real **local D1** events after the synthetic invoice attack.
+
+- **Proof status:** locally consistent Merkle proofs and a separate verifier are implemented. The dashboard labels its D1-derived batch **unanchored**. A root obtained from the same database is not an independent integrity guarantee.
+- **EVM preparation:** an unsigned `bytes32` anchoring intent and [reference-only Solidity root registry](contracts/AuditRootRegistry.sol) are provided, with no broadcast, contract deployment, gas expenditure or verified receipt.
+- **Limits:** no proof that initially recorded events are truthful or that never-recorded events are complete; no independently published chain head, production archival, EVM contract audit or finality verification yet.
+
+Run: `PYTHONPATH=src python scripts/demo_merkle_proofs.py --assert-secure`. See [issue #5](https://github.com/EagleFox31/agentshield-ai/issues/5) and [ADR-0006](docs/adr/0006-merkle-evm-proof-boundary.md).
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
