@@ -1,6 +1,7 @@
 -- Local-only human approval workflow schema v2; apply AFTER 0001.
 -- No tool arguments or bank-account values are stored.
 ALTER TABLE approval_requests ADD COLUMN decision_id TEXT;
+ALTER TABLE approval_requests ADD COLUMN consume_event_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_request_decision_id
   ON approval_requests (decision_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_decisions_once
