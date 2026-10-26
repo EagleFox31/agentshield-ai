@@ -1,0 +1,30 @@
+name: Product README Quality
+
+on:
+  pull_request:
+    paths:
+      - README.md
+      - .appfactory/readme-contract.json
+      - docs/**
+      - SECURITY.md
+      - .github/workflows/readme-quality.yml
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - .appfactory/readme-contract.json
+      - docs/**
+      - SECURITY.md
+      - .github/workflows/readme-quality.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  product-readme:
+    uses: Trigenys/appfactory/.github/workflows/reusable-readme-quality.yml@9cc02cb742926fdbe24bf412fc8065180e487ec8
+    with:
+      manifest_path: .appfactory/readme-contract.json
+      readme_path: README.md
+      appfactory_ref: 9cc02cb742926fdbe24bf412fc8065180e487ec8
