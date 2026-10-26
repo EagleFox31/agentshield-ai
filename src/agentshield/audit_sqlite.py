@@ -10,8 +10,8 @@ import sqlite3
 
 from agentshield.audit import (
     AuditConflict, AuditEvent, AuditStorageError, FETCH_EVENT_SQL,
-    FINGERPRINT_SQL, INSERT_EVENT_SQL, INSERT_NONCE_SQL, decode_event,
-    event_arguments, validate_nonce,
+    CONSUME_APPROVAL_SQL, FINGERPRINT_SQL, INSERT_EVENT_SQL, INSERT_NONCE_SQL, decode_event,
+    event_arguments, validate_approval, validate_nonce,
 )
 
 
@@ -34,6 +34,20 @@ class SQLiteAuditRepository:
             raise
         except sqlite3.Error as exc:
             raise AuditStorageError("Audit write could not be confirmed") from exc
+
+    async def consume_approved_request(
+        self, tenant_id: str, approval_id: str, action_digest: str, now_ms: int,
+    ) -> bool:
+        validate_approval(tenant_id, approval_id, action_digest, now_ms)
+        try:
+            with self._db:
+                result = self._db.execute(
+                    CONSUME_APPROVAL_SQL,
+                    (now_ms, approval_id, tenant_id, action_digest, now_ms),
+                ).fetchone()
+                return result is not None
+        except sqlite3.Error as exc:
+            raise AuditStorageError("Approval state transition failed") from exc
 
     async def get_event(self, tenant_id: str, event_id: str) -> AuditEvent | None:
         try:
