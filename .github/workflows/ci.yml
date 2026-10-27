@@ -8,6 +8,7 @@ on:
       - 'tests/**'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
+      - '.github/dependabot.yml'
   pull_request:
     paths:
       - 'src/**'
