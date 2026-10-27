@@ -236,6 +236,17 @@ AgentShield now extracts **explainable, redacted prompt-injection and suspicious
 
 See [Hybrid detection & safety limits](docs/HYBRID_DETECTION.md), [advisory-only core](src/agentshield/detection.py), and [issue #4](https://github.com/EagleFox31/agentshield-ai/issues/4).
 
+## Optional AI-provider readiness — disabled by default
+
+AgentShield has a **Cloudflare Workers AI candidate adapter** for strictly redacted security-triage features, with an atomic per-tenant/day **SQLite/D1 quota gate** and a strict allowlisted response schema. **It is not an operational hosted AI service**: the Worker has no AI binding, the adapter defaults to disabled, and all current model tests use canned in-process fakes.
+
+- **Candidate:** Cloudflare Workers AI `@cf/meta/llama-3.2-3b-instruct`; evaluated against Llama Guard and third-party AI Gateway on privacy, logging, runtime and pricing grounds.
+- **Never an authorizer:** The model's response cannot override `DENY`, create approval grants or execute tools. Failures return advisory `triage_unavailable` while existing policy remains authoritative.
+- **Budget:** Quota rows are absent until deliberately provisioned. A verified durable reservation, unique request ID and daily limit are mandatory before any future inference. Budget tokens are an estimate, **not a monetary cap**.
+- **Limit:** No real model inference, latency benchmark, external data transfer or paid invocation has occurred. A held-out independent evaluation and explicit permission to activate remain outstanding.
+
+See [Provider/privacy/cost decision](docs/AI_PROVIDER_EVALUATION.md), [adapter](src/agentshield/workers_ai_adapter.py), [quota migration](migrations/0003_ai_triage_budget.sql) and [issue #22](https://github.com/EagleFox31/agentshield-ai/issues/22), which **remains open** pending approval for a live model.
+
 ## Technology direction
 
 **Python / FastAPI on Cloudflare Python Workers (target)** · existing deterministic Python PolicyEngine · signed JWT identity · **Cloudflare D1 for hosted audit / SQLite for offline tests** · GitHub Actions · local Merkle proofs · optional EVM testnet anchoring. **No cloud deployment or remote database has been created as part of this specification.**
