@@ -178,7 +178,7 @@ jobs:
           echo 'Local Pyodide WebCrypto ES256 signature parity checked with signed, forged and wrong-audience fixtures; NO auth replacement.'
           # Candidate verifies the ENTIRE JWT contract only after native
           # Web Crypto signature verification; never used for authorization.
-          for fixture in valid bad_signature wrong_audience wrong_issuer expired \
+          for fixture in valid rotated_valid bad_signature unknown_kid wrong_audience wrong_issuer expired \
                          future_claims invalid_scope invalid_tenant audience_list \
                          missing_jti; do
             curl --fail --silent --show-error \
@@ -202,7 +202,9 @@ jobs:
           assert valid["used_for_authentication"] is False
           assert valid["enforcement_ready"] is False
           assert valid["real_tool_called"] is False
-          for name in ("bad_signature", "wrong_audience", "wrong_issuer",
+          rotated = json.loads(Path("/tmp/webcrypto-jwt-rotated_valid.json").read_text())
+          assert rotated["candidate_valid"] is True and rotated["validated_scope_count"] == 1
+          for name in ("bad_signature", "unknown_kid", "wrong_audience", "wrong_issuer",
                        "expired", "future_claims", "invalid_scope", "invalid_tenant",
                        "audience_list", "missing_jti", "operator-key"):
               candidate = json.loads(Path(f"/tmp/webcrypto-jwt-{name}.json").read_text())
