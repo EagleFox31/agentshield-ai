@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from agentshield.detection import RedactedFeatures
+from agentshield.detection import RedactedFeatures, TriageUnavailable
 
 MODEL_ID = "@cf/meta/llama-3.2-3b-instruct"
 LOCAL_MODEL_VERSION = "workers-ai-llama-3.2-3b-v1"
@@ -46,7 +46,7 @@ _ALLOWED_OUTPUT = frozenset({
 })
 
 
-class AIAdapterUnavailable(RuntimeError):
+class AIAdapterUnavailable(TriageUnavailable):
     """No inference happened. Do not include raw provider errors in logs."""
 
 
