@@ -8,7 +8,9 @@ version = "0.1.0a0"
 description = "Policy-first security primitives for AI agent tool authorization"
 requires-python = ">=3.11"
 # Pywrangler resolves Pyodide dependencies from the required project set.
-dependencies = ["fastapi==0.128.2", "PyJWT==2.15.1", "cryptography==47.0.0"]
+# Worker production runtime contains no PyJWT or cryptography compiled wheel.
+# Native Cloudflare Web Crypto handles ES256 verification (fail closed outside Worker).
+dependencies = ["fastapi==0.139.2", "starlette==1.3.1"]
 authors = [{name = "Jennifer Lawrynn"}]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
@@ -23,5 +25,10 @@ where = ["src"]
 # solely so Pywrangler installs it into the Worker/Pyodide runtime.
 # Only the local Worker compatibility job installs these development tools.
 [dependency-groups]
-worker = ["workers-py==1.17.7", "workers-runtime-sdk==1.9.1"]
+# For generating synthetic signing fixtures on *host CPython* before pywrangler
+# boots. pywrangler reads [project.dependencies] for the Pyodide Worker image.
+worker = ["workers-py==1.17.7", "workers-runtime-sdk==1.9.1",
+          "PyJWT==2.15.1", "cryptography==50.0.2"]
+# Host-only independent PyJWT security oracle for parity tests.
+test = ["PyJWT==2.15.1", "cryptography==50.0.2"]
 
