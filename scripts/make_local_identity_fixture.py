@@ -33,6 +33,13 @@ def main() -> None:
         "alg": "ES256", "use": "sig", "key_ops": ["verify"],
         "x": b64u(n.x), "y": b64u(n.y),
     }
+    # Second explicitly approved agent key proves native JWKS rotation.
+    rotated_signer = ec.generate_private_key(ec.SECP256R1())
+    rotated_coords = rotated_signer.public_key().public_numbers()
+    rotated_public_jwk = {
+        **public_jwk, "kid": "ci-ephemeral-key-2",
+        "x": b64u(rotated_coords.x), "y": b64u(rotated_coords.y),
+    }
     now = int(time.time())
     claims = {
         "iss": ISSUER, "aud": AUDIENCE, "sub": "local-demo-agent",
@@ -53,6 +60,33 @@ def main() -> None:
             signer, algorithm="ES256", headers={"kid": "ci-ephemeral-key-1"},
         ),
     }
+    # Negative signed-claims fixtures for the full WebCrypto candidate.
+    # Signatures are VALID; claim validation, not crypto, must reject them.
+    candidate_invalid_claims = {
+        "wrong_issuer": {**claims, "iss": "https://attacker.test.example"},
+        "future_claims": {**claims, "iat": now + 400,
+                          "nbf": now + 400, "exp": now + 590},
+        "invalid_scope": {**claims, "scope": "invoice:read *"},
+        "invalid_tenant": {**claims, "tenant_id": "../other"},
+        "audience_list": {**claims, "aud": [
+            AUDIENCE, "urn:agentshield:other",
+        ]},
+        "missing_jti": {k: v for k, v in claims.items() if k != "jti"},
+    }
+    for name, invalid_claims in candidate_invalid_claims.items():
+        tokens[name] = jwt.encode(
+            invalid_claims, signer, algorithm="ES256",
+            headers={"kid": "ci-ephemeral-key-1"},
+        )
+    tokens["rotated_valid"] = jwt.encode(
+        {**claims, "jti": "rotated-ci-token-123"},
+        rotated_signer, algorithm="ES256",
+        headers={"kid": "ci-ephemeral-key-2"},
+    )
+    tokens["unknown_kid"] = jwt.encode(
+        claims, other, algorithm="ES256",
+        headers={"kid": "untrusted-agent-key"},
+    )
     # Separate issuer, audience and public signing key for the human.
     operator_signer = ec.generate_private_key(ec.SECP256R1())
     operator_coords = operator_signer.public_key().public_numbers()
@@ -86,7 +120,7 @@ def main() -> None:
 
     for name, token in tokens.items():
         (OUTPUT / f"{name}.txt").write_text(token, encoding="utf-8")
-    jwks = json.dumps({"keys": [public_jwk]}, separators=(",", ":"))
+    jwks = json.dumps({"keys": [public_jwk, rotated_public_jwk]}, separators=(",", ":"))
     operator_jwks = json.dumps({"keys": [operator_public_jwk]}, separators=(",", ":"))
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"

@@ -88,6 +88,45 @@ def _trust_store(settings: Mapping[str, str]) -> tuple[str, str, dict]:
     return issuer, audience, lookup
 
 
+def validated_claims_to_agent(payload: Mapping[str, object], *, issuer: str, audience: str,
+                              now: int | None = None) -> VerifiedAgent:
+    """Create trusted claims only AFTER a proven ES256 signature.
+
+    Shared by the existing PyJWT verifier and the isolated native WebCrypto
+    candidate. This function alone NEVER authenticates a JWT.
+    """
+    if not isinstance(payload, dict) or any(name not in payload for name in _REQUIRED_CLAIMS):
+        raise AgentAuthenticationError("Required signed claims missing")
+    if payload.get("iss") != issuer or type(payload.get("aud")) is not str or payload["aud"] != audience:
+        raise AgentAuthenticationError("Wrong signed issuer or audience")
+    current_time = int(time.time()) if now is None else now
+    for name in ("exp", "iat", "nbf"):
+        if type(payload.get(name)) is not int:
+            raise AgentAuthenticationError("Invalid token time claims")
+    issued, expiry, not_before = (payload[name] for name in ("iat", "exp", "nbf"))
+    if (expiry <= current_time or not_before > current_time + 10
+        or issued > current_time + 10 or issued > not_before + 10
+        or expiry - issued > 300 or expiry <= not_before):
+        raise AgentAuthenticationError("Invalid agent token lifetime")
+    tenant = payload.get("tenant_id")
+    subject = payload.get("sub")
+    jti = payload.get("jti")
+    scope_string = payload.get("scope")
+    if (not isinstance(tenant, str) or not _TENANT.fullmatch(tenant)
+        or not isinstance(subject, str) or not _NAME.fullmatch(subject)
+        or not isinstance(jti, str) or not _JTI.fullmatch(jti)):
+        raise AgentAuthenticationError("Invalid agent identity claims")
+    if not isinstance(scope_string, str) or len(scope_string) > 1024:
+        raise AgentAuthenticationError("Invalid agent scope")
+    scopes = scope_string.split(" ")
+    if (not 1 <= len(scopes) <= 24 or any(
+        not _SCOPE.fullmatch(value) for value in scopes
+    ) or len(set(scopes)) != len(scopes)):
+        raise AgentAuthenticationError("Invalid agent scope")
+    principal = Principal(f"{tenant}:{subject}", frozenset(scopes))
+    return VerifiedAgent(principal, tenant, subject, jti, issued, expiry)
+
+
 def verify_agent_jwt(token: str, settings: Mapping[str, str], *, now: int | None = None) -> VerifiedAgent:
     """Validate ES256 signature AND purpose-bound claims; return verified scopes.
 
@@ -123,32 +162,7 @@ def verify_agent_jwt(token: str, settings: Mapping[str, str], *, now: int | None
     except (jwt.PyJWTError, ValueError, TypeError, KeyError) as exc:
         raise AgentAuthenticationError("Invalid agent bearer token") from exc
 
-    current_time = int(time.time()) if now is None else now
-    for name in ("exp", "iat", "nbf"):
-        if type(payload.get(name)) is not int:
-            raise AgentAuthenticationError("Invalid token time claims")
-    issued, expiry, not_before = (payload[name] for name in ("iat", "exp", "nbf"))
-    if (expiry <= current_time or not_before > current_time + 10
-        or issued > current_time + 10 or issued > not_before + 10
-        or expiry - issued > 300 or expiry <= not_before):
-        raise AgentAuthenticationError("Invalid agent token lifetime")
-    tenant = payload.get("tenant_id")
-    subject = payload.get("sub")
-    jti = payload.get("jti")
-    scope_string = payload.get("scope")
-    if (not isinstance(tenant, str) or not _TENANT.fullmatch(tenant)
-        or not isinstance(subject, str) or not _NAME.fullmatch(subject)
-        or not isinstance(jti, str) or not _JTI.fullmatch(jti)):
-        raise AgentAuthenticationError("Invalid agent identity claims")
-    if not isinstance(scope_string, str) or len(scope_string) > 1024:
-        raise AgentAuthenticationError("Invalid agent scope")
-    scopes = scope_string.split(" ")
-    if (not 1 <= len(scopes) <= 24 or any(
-        not _SCOPE.fullmatch(value) for value in scopes
-    ) or len(set(scopes)) != len(scopes)):
-        raise AgentAuthenticationError("Invalid agent scope")
-    principal = Principal(f"{tenant}:{subject}", frozenset(scopes))
-    return VerifiedAgent(principal, tenant, subject, jti, issued, expiry)
+    return validated_claims_to_agent(payload, issuer=issuer, audience=audience, now=now)
 
 
 def require_bearer(authorization: str | None, settings: Mapping[str, str]) -> VerifiedAgent:

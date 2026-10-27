@@ -30,6 +30,7 @@ from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISet
 from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
+from agentshield.webcrypto_jwt_candidate import verify_agent_jwt_webcrypto
 
 router = APIRouter()
 
@@ -354,6 +355,42 @@ async def local_ai_adapter_contract(request: Request):
         **report.to_dict(), "simulated_provider": True,
         "remote_inference": False, "actual_ai_binding_used": False,
         "enforcement_ready": False, "real_tool_called": False,
+    }
+
+
+@router.get("/_local/demo/webcrypto-jwt-candidate")
+async def operator_local_webcrypto_jwt_candidate(request: Request):
+    """Candidate full verification, only visible to an existing local operator.
+
+    This route is NEVER used by agent authentication, approvals or tools.
+    A valid signature alone cannot authenticate the candidate JWT.
+    """
+    operator = _identity(request, "OPERATOR", "approvals:read")
+    env = _local_env(request)
+    settings = {
+        name: str(getattr(env, name, "") or "")
+        for name in ("AGENT_JWT_ISSUER", "AGENT_JWT_AUDIENCE", "AGENT_JWKS_JSON")
+    }
+    candidate_valid = False
+    same_tenant = False
+    verified_scope_count = 0
+    try:
+        candidate = await verify_agent_jwt_webcrypto(
+            request.headers.get("x-probe-token", ""), settings,
+        )
+        candidate_valid = True
+        same_tenant = candidate.tenant_id == operator.tenant_id
+        verified_scope_count = len(candidate.principal.scopes)
+    except (AgentAuthenticationError, IdentityConfigurationError):
+        pass
+    return {
+        "candidate_valid": candidate_valid,
+        "same_tenant_as_operator": same_tenant,
+        "validated_scope_count": verified_scope_count,
+        "used_for_authentication": False,
+        "enforcement_ready": False,
+        "real_tool_called": False,
+        "local_only": True,
     }
 
 
