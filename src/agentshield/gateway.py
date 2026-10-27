@@ -10,9 +10,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentshield.identity import (
-    AgentAuthenticationError, IdentityConfigurationError, require_bearer,
+    AgentAuthenticationError, IdentityConfigurationError,
 )
 from agentshield.approval_api import router as approval_router, _identity as _verified_local_identity
+from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack
 import time
@@ -91,7 +92,7 @@ async def authenticated_agent_identity(request: Request) -> dict[str, object]:
         for name in ("AGENT_JWT_ISSUER", "AGENT_JWT_AUDIENCE", "AGENT_JWKS_JSON")
     }
     try:
-        result = require_bearer(request.headers.get("authorization"), configuration)
+        result = await require_bearer_webcrypto(request.headers.get("authorization"), configuration)
     except IdentityConfigurationError as exc:
         raise HTTPException(status_code=503, detail="Agent verifier unavailable") from exc
     except AgentAuthenticationError as exc:
@@ -226,7 +227,7 @@ async def invoice_attack_demo(request: Request) -> dict[str, object]:
     server-side synthetic fixture is evaluated by the existing PolicyEngine.
     """
     env = _require_local_smoke(request)
-    agent = _verified_local_identity(request, "AGENT")
+    agent = await _verified_local_identity(request, "AGENT")
     try:
         repository = D1AuditRepository(getattr(env, "DB", None))
         report = await run_invoice_attack(
