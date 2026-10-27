@@ -53,6 +53,24 @@ def main() -> None:
             signer, algorithm="ES256", headers={"kid": "ci-ephemeral-key-1"},
         ),
     }
+    # Negative signed-claims fixtures for the full WebCrypto candidate.
+    # Signatures are VALID; claim validation, not crypto, must reject them.
+    candidate_invalid_claims = {
+        "wrong_issuer": {**claims, "iss": "https://attacker.test.example"},
+        "future_claims": {**claims, "iat": now + 400,
+                          "nbf": now + 400, "exp": now + 590},
+        "invalid_scope": {**claims, "scope": "invoice:read *"},
+        "invalid_tenant": {**claims, "tenant_id": "../other"},
+        "audience_list": {**claims, "aud": [
+            AUDIENCE, "urn:agentshield:other",
+        ]},
+        "missing_jti": {k: v for k, v in claims.items() if k != "jti"},
+    }
+    for name, invalid_claims in candidate_invalid_claims.items():
+        tokens[name] = jwt.encode(
+            invalid_claims, signer, algorithm="ES256",
+            headers={"kid": "ci-ephemeral-key-1"},
+        )
     # Separate issuer, audience and public signing key for the human.
     operator_signer = ec.generate_private_key(ec.SECP256R1())
     operator_coords = operator_signer.public_key().public_numbers()
