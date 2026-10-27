@@ -24,6 +24,9 @@ from agentshield.identity import (
 )
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
 from agentshield.detection import UntrustedSegment, ToolObservation, assess_threat
+from agentshield.ai_budget import D1AIBudget
+from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISettings
+
 from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 
@@ -298,6 +301,58 @@ async def operator_local_threat_triage(request: Request):
         **report.to_dict(), "tenant_id": operator.tenant_id,
         "source_document_included": False, "model_provider_configured": False,
         "authorization_from_ai": False, "real_tool_called": False,
+    }
+
+
+
+
+@router.get("/_local/demo/ai-adapter-contract")
+async def local_ai_adapter_contract(request: Request):
+    """Test the Workers AI adapter with a canned fake; never real inference.
+
+    This route is available only with the local smoke flag, signed operator
+    JWT and a manually provisioned local-D1 quota for the synthetic tenant.
+    The existing production-shaped env.AI binding is NOT accessed.
+    """
+    operator = _identity(request, "OPERATOR", "approvals:read")
+    env = _local_env(request)
+    import secrets
+    budget = D1AIBudget(
+        getattr(env, "DB", None), tenant_id=operator.tenant_id,
+        request_id="contract-" + secrets.token_hex(16),
+        now_ms=1_793_000_000_000,  # deterministic offline Oct 26 fixture
+    )
+    class CannedLocalModel:
+        async def run(self, model, arguments):
+            if model != "@cf/meta/llama-3.2-3b-instruct":
+                raise RuntimeError("Unreviewed model in sandbox")
+            prompt = arguments["messages"][1]["content"]
+            if "INVOICE" in prompt or "IGNORE THE USER" in prompt:
+                raise RuntimeError("Unredacted invoice sent to sandbox")
+            return {"response": (
+                '{"risk_code":"POSSIBLE_TOOL_HIJACK",'
+                '"evidence_ids":["fixture-invoice-0042"]}'
+            )}
+
+    principal = Principal(
+        operator.tenant_id + ":invoice_fixture",
+        frozenset({"invoice:read"}),
+    )
+    decision = demo_rules(principal).evaluate(principal, SUPPLIER_CHANGE)
+    report = await assess_threat(
+        decision,
+        [UntrustedSegment(
+            "fixture-invoice-0042", "retrieved_document", INVOICE_TEXT,
+        )],
+        model=WorkersAIBindingAdapter(
+            settings=WorkersAISettings(enabled=True),
+            binding=CannedLocalModel(), budget=budget,
+        ),
+    )
+    return {
+        **report.to_dict(), "simulated_provider": True,
+        "remote_inference": False, "actual_ai_binding_used": False,
+        "enforcement_ready": False, "real_tool_called": False,
     }
 
 
