@@ -142,6 +142,10 @@ class ThreatReport:
         return asdict(self)
 
 
+class TriageUnavailable(RuntimeError):
+    """The optional AI provider is disabled, rate-limited or unavailable."""
+
+
 class TriageAdapter(Protocol):
     async def classify(self, features: RedactedFeatures) -> Mapping[str, object]: ...
 
@@ -253,6 +257,8 @@ async def assess_threat(
             status = "available"
         except asyncio.TimeoutError:
             status = "timeout"
+        except TriageUnavailable:
+            status = "triage_unavailable"
         except (Exception,):
             # No exception messages, model-generated text, prompt or secret leaks.
             status = "unavailable_or_invalid"
