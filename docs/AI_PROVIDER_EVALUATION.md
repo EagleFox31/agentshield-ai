@@ -54,3 +54,31 @@ An idempotency key (`tenant,utc_day,request_id`) can be reserved at most once. A
 **Keep issue #22 open** until actual provider activation is authorized. A future implementation must obtain an explicit permission decision for cost/data processing, add a dedicated reviewed AI binding, test the Python Worker FFI against a real (sandbox) Workers AI call, validate the provider's exact response contract and token usage, reconcile usage against D1, measure quality on an *independent, held-out* red-team corpus, and confirm billing/logging/privacy settings. A real model's false-positive/negative rates and invocation latency remain **unknown**.
 
 RAIDER: reuses existing policy and redacted features, isolates the binding at a single pure Python port, makes budget idempotent/durable, uses Cloudflare's native D1 and binding shapes, documents false claims before they happen, and provides repeatable adversarial regressions.
+
+
+## Held-out advisory triage benchmark protocol (offline-first; no provider calls)
+
+**Status:** protocol only — no measured performance, no model activation, no deployment. This protocol does not close #22.
+
+### Threat-model-aligned evaluation design
+
+Build a versioned, synthetic corpus under `tests/fixtures/triage_benchmark/` with a machine-readable manifest and separate train/dev/held-out partitions. Each case must contain an opaque case ID, threat family, expected adversarial-intent label (`attack`, `benign`, `ambiguous`), source type, expected deterministic signals, independent assessor rationale, and an explicit *trusted PolicyEngine decision*. Generate synthetic examples without real JWTs, keys, personal records, invoices or customer documents. Freeze a held-out set *before* comparing models; reject duplicates and near-duplicates across partitions. Record the corpus revision/hash and assessor disagreements.
+
+Minimum strata: direct instruction override, role/authority spoofing, credential exfiltration, tool-output laundering, hidden Unicode, indirect/retrieval-borne injection, benign quoted security instructions, ambiguous instructions, multilingual paraphrases, and tool-action sequences. Include benign hard negatives to measure alert fatigue. Keep labels independent from which regex signal happens to fire; do not turn a rule match into automatic ground truth.
+
+### Two separate claims, two separate evaluations
+
+1. **End-to-end deterministic detection:** run `deterministic_signals` on the synthetic source, measure case-level precision/recall/F1 and false positive/negative counts against independent intent labels. Declare explicitly that rules have incomplete recall. Report results by threat family, language, and source type; show confusion matrix and confidence intervals where sample sizes allow.
+2. **Incremental model triage:** feed **only** `RedactedFeatures` from the same samples to a disabled-by-default candidate adapter. Compare prioritization/abstention against the deterministic-only baseline on the frozen held-out set. Since raw content never reaches the model, **do not claim semantic attack detection of previously unseen text**. Report coverage, classification agreement, abstention, malformed response, unavailable/timeouts, p50/p95 elapsed milliseconds, estimated usage and real billed cost *only when observed*. A fake binding verifies contract/security, **not real model quality**.
+
+Always stratify by `model_status`: `not_configured`, `available`, `timeout`, `triage_unavailable`, `unavailable_or_invalid`. Do not treat unavailable cases as true negatives. Never compare model `risk_code` directly to ground-truth attack labels without documenting a preregistered risk-to-alert mapping.
+
+### Security gates (mandatory pass/fail, not averaged metrics)
+
+For every case, assert `ThreatReport.policy_effect == trusted_decision.effect.value`. In adversarial model outputs, even `BENIGN_CONTEXT` must never turn `DENY` or `REQUIRE_APPROVAL` into `ALLOW`; model output cannot create approvals, scopes or tool execution. Verify all outgoing payloads are exclusively redacted schema/version/codes/counts/opaque IDs and all malformed, forged-evidence, oversize, slow and exception responses fail safely. Check no raw corpus source text or secrets enter AI requests, reports, logs or saved artifacts. Re-run replay, tenant isolation, atomic quota and exhausted-budget controls already exercised by #23.
+
+### Reproducibility and acceptance
+
+Provide a deterministic offline CLI/script and machine-readable results (JSON, plus human-readable report), fixed sampling seed, immutable corpus revision, independent annotation guidelines, test command, and CI workflow that **never** enables `env.AI`. Include comparator baseline and class prevalence: precision/recall without base rates misleads. State denominators and uncertainty; no target accuracy assertion before measurement. A future live-provider benchmark is a separately approved, cost-capped run after privacy/legal review; preserve the offline metrics for comparison and reconcile real billed usage against reserved D1 quotas.
+
+**Exit condition for this documentation slice:** protocol reviewed and merged, with #22 still open. **Exit condition for benchmark implementation:** benchmark fixture + runner + CI and genuine reported offline measurements. **Exit condition for live provider:** separate explicit authorization, privacy/cost gate, real smoke test and model-quality review.
