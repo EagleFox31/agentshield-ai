@@ -176,6 +176,46 @@ jobs:
             http://127.0.0.1:8787/_local/demo/webcrypto-es256-probe)
           test "$status" = 401
           echo 'Local Pyodide WebCrypto ES256 signature parity checked with signed, forged and wrong-audience fixtures; NO auth replacement.'
+          # Candidate verifies the ENTIRE JWT contract only after native
+          # Web Crypto signature verification; never used for authorization.
+          for fixture in valid bad_signature wrong_audience wrong_issuer expired \
+                         future_claims invalid_scope invalid_tenant audience_list \
+                         missing_jti; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $operator_probe_token" \
+              -H "X-Probe-Token: $(cat ".local-jwt/$fixture.txt")" \
+              http://127.0.0.1:8787/_local/demo/webcrypto-jwt-candidate \
+              > "/tmp/webcrypto-jwt-$fixture.json"
+          done
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_probe_token" \
+            -H "X-Probe-Token: $operator_probe_token" \
+            http://127.0.0.1:8787/_local/demo/webcrypto-jwt-candidate \
+            > /tmp/webcrypto-jwt-operator-key.json
+          python - <<'PY_CANDIDATE'
+          import json
+          from pathlib import Path
+          valid = json.loads(Path("/tmp/webcrypto-jwt-valid.json").read_text())
+          assert valid["candidate_valid"] is True, valid
+          assert valid["same_tenant_as_operator"] is True, valid
+          assert valid["validated_scope_count"] == 1, valid
+          assert valid["used_for_authentication"] is False
+          assert valid["enforcement_ready"] is False
+          assert valid["real_tool_called"] is False
+          for name in ("bad_signature", "wrong_audience", "wrong_issuer",
+                       "expired", "future_claims", "invalid_scope", "invalid_tenant",
+                       "audience_list", "missing_jti", "operator-key"):
+              candidate = json.loads(Path(f"/tmp/webcrypto-jwt-{name}.json").read_text())
+              assert candidate["candidate_valid"] is False, (name, candidate)
+              assert candidate["validated_scope_count"] == 0, (name, candidate)
+              assert candidate["enforcement_ready"] is False
+          PY_CANDIDATE
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "X-Probe-Token: $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/_local/demo/webcrypto-jwt-candidate)
+          test "$status" = 401
+          echo 'Candidate full JWT claims/signature validated under local Pyodide; NOT used as gateway auth.'
+
           echo 'Local FastAPI, D1 redacted audit, one-time nonce and ES256 JWT passed in Python Workers.'
           # Separate operator and agent JWT trust roots, with a local-only mock.
           agent_token=$(cat .local-jwt/approval_agent.txt)
