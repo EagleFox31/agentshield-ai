@@ -9,6 +9,8 @@ on:
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
       - 'src/agentshield/detection.py'
+      - 'src/agentshield/workers_ai_adapter.py'
+      - 'src/agentshield/ai_budget.py'
       - 'scripts/evaluate_detection.py'
       - 'tests/fixtures/detection_v1.json'
       - 'src/agentshield/merkle.py'
@@ -34,6 +36,8 @@ on:
       - 'src/agentshield/identity.py'
       - 'src/agentshield/demo_invoice.py'
       - 'src/agentshield/detection.py'
+      - 'src/agentshield/workers_ai_adapter.py'
+      - 'src/agentshield/ai_budget.py'
       - 'scripts/evaluate_detection.py'
       - 'tests/fixtures/detection_v1.json'
       - 'src/agentshield/merkle.py'
@@ -101,6 +105,10 @@ jobs:
         run: |
           npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
           npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
+          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
+          # Manually provision a tiny quota for the synthetic LOCAL tenant.
+          # Never configure or invoke a real AI binding in the workflow.
+          npx --yes wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
@@ -265,6 +273,24 @@ jobs:
             http://127.0.0.1:8787/_local/demo/threat-triage)
           test "$status" = 401
           echo 'Hybrid triage local preview has advisory-only signals, no model or authorization bypass.'
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox.json
+          python -c 'import json; d=json.load(open("/tmp/worker-ai-sandbox.json")); assert d["simulated_provider"] and not d["remote_inference"] and not d["actual_ai_binding_used"] and d["model_status"]=="available" and d["model_advisory"]["risk_code"]=="POSSIBLE_TOOL_HIJACK" and d["policy_effect"]=="deny" and not d["real_tool_called"]'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" \
+            http://127.0.0.1:8787/_local/demo/ai-adapter-contract)
+          test "$status" = 401
+          # Two maximum-cost reservations allowed; third fake inference cannot
+          # exceed per-tenant/day local quota and reports triage_unavailable.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox-second.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox-third.json
+          python -c 'import json; d=json.load(open("/tmp/worker-ai-sandbox-third.json")); assert d["model_status"]=="triage_unavailable" and d["policy_effect"]=="deny" and not d["remote_inference"]'
+          echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
       - name: Print diagnostic on failure
         if: failure()
         run: |
