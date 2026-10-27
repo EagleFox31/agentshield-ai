@@ -10,6 +10,7 @@ independently reviewed ES256 + claims implementation is approved.
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import re
 from dataclasses import dataclass
@@ -34,7 +35,10 @@ def _decode_url(value: str, *, max_chars: int) -> bytes:
         raise ValueError("Invalid base64url segment length")
     if not _B64URL.fullmatch(value):
         raise ValueError("Invalid base64url alphabet")
-    raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    try:
+        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Malformed base64url") from exc
     if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
         raise ValueError("Noncanonical base64url encoding")
     return raw
