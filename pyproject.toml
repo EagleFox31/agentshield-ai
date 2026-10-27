@@ -8,7 +8,7 @@ version = "0.1.0a0"
 description = "Policy-first security primitives for AI agent tool authorization"
 requires-python = ">=3.11"
 # Pywrangler resolves Pyodide dependencies from the required project set.
-dependencies = ["fastapi==0.128.2", "PyJWT==2.15.1", "cryptography==47.0.0"]
+dependencies = ["fastapi==0.139.2", "starlette==1.3.1", "PyJWT==2.15.1", "cryptography==50.0.2"]
 authors = [{name = "Jennifer Lawrynn"}]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
