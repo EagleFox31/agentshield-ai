@@ -17,8 +17,11 @@ class WorkerPackagingTests(unittest.TestCase):
         dependencies = project["project"].get("dependencies", [])
         self.assertTrue(any(dep.lower().startswith("fastapi") for dep in dependencies))
         self.assertTrue(any(dep.lower().startswith("pyjwt") for dep in dependencies))
-        # Keep compatible with the Pyodide 314.0.7 compiled cryptography wheel.
-        self.assertIn("cryptography==47.0.0", dependencies)
+        # Require an explicit reviewed crypto dependency until a vetted native
+        # WebCrypto verifier replaces it. The Worker smoke checks *actual*
+        # Pyodide compatibility and the dependency CI rejects vulnerable pins;
+        # never permanently bake a known-vulnerable version into a test.
+        self.assertTrue(any(dep.lower().startswith("cryptography==") for dep in dependencies))
 
         worker_tools = project.get("dependency-groups", {}).get("worker", [])
         self.assertTrue(any(item.startswith("workers-py") for item in worker_tools))
