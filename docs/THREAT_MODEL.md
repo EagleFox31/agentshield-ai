@@ -1,6 +1,6 @@
 # Threat model — AgentShield AI
 
-**Status:** Draft v0.1 | **Scope:** Proposed MVP (not an implementation report)
+**Status:** Design security review candidate v0.2 (implementation and reviewer acceptance separate) | **Scope:** Proposed MVP, local prototype only
 
 ## System boundary
 
@@ -32,6 +32,7 @@ AgentShield is an enforcement gateway invoked **before** an agent's tool call re
 | --- | --- | --- | --- |
 | Goal hijack | Retrieved page requests exporting a secret | Separate trusted intent from untrusted context; policy denies exfiltration tool | OWASP ASI01 |
 | Tool misuse | Agent attempts an external transfer without approval | Allow/deny/approval policy at tool boundary | OWASP ASI02 |
+| SSRF / internal metadata access | Retrieved instructions induce an HTTP tool to request an internal IP, link-local metadata or redirect to a private host | Default-deny unknown HTTP tools; enforce destination allowlist, validated scheme/host/port, DNS resolution and redirect checks at a constrained execution adapter; disallow credentials on untrusted destinations | OWASP ASI02 / ASI05 |
 | Identity & privilege abuse | Tool receives wildcard cloud scope | Per-agent scopes, expiry and service-side authorization | OWASP ASI03 |
 | Supply-chain / tool poisoning | A tool changes schema or misrepresents output | Tool registry trust, schema pinning, signed manifests where available | OWASP ASI04 / MCP03 |
 | Unexpected code execution | Agent asks shell tool to execute an arbitrary snippet | Default deny, sandbox, command parameter validation | OWASP ASI05 |
@@ -49,6 +50,19 @@ AgentShield is an enforcement gateway invoked **before** an agent's tool call re
 - Sensitive arguments are redacted before evidence persistence.
 - Gateway errors and unavailable approvers never become silent allow decisions.
 - Blockchain verification never substitutes for collection integrity or source authentication.
+
+## Control-to-test traceability and residual risks
+
+| Invariant / abuse scenario | Current evidence | Remaining enforcement gap |
+| --- | --- | --- |
+| Unrecognized tool, resource or operation => deny | `tests/test_policy.py::PolicyEngineTests.test_unknown_tool_operation_resource_and_actor_are_denied`; `src/agentshield/policy.py` | Protect only calls that pass through the policy gateway |
+| Insufficient principal scope => deny | `test_required_scope_cannot_be_supplied_by_untrusted_action` | Signed identity integration into public action endpoint remains incomplete |
+| Explicit deny over allow and approval over allow | `test_explicit_deny_overrides_allows`, `test_human_approval_has_precedence_over_allow` | Do not treat review request as execution capability |
+| Prompt injection cannot grant additional permissions | `test_prompt_injection_cannot_extend_permissions` | Does not prove detection of all injections |
+| SSRF and redirection to private destinations | Threat scenario and intended adapter contract above | **Not implemented or tested end-to-end**: network-capable adapter must reject private/link-local/multicast/loopback targets after DNS resolution and every redirect; add rebinding tests before enabling HTTP tools |
+| Approval expiration/replay, redacted audit, failsafe persistence | Local approval/audit code and regression suites developed in subsequent issues | No hosted enforcement/readiness claim; verify cross-boundary end-to-end in #3 |
+
+**Review boundaries:** This document inventories intended controls and traces existing test evidence, rather than attesting production security. Reviewer sign-off must verify scenarios, mappings, coverage gaps and explicit risk acceptance before converting this design review candidate to accepted design.
 
 ## Excluded from MVP
 - Guarantees that all prompt injection is detectable
