@@ -29,6 +29,7 @@ from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISet
 
 from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.approvals_dashboard import DASHBOARD_HTML
+from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
 
 router = APIRouter()
 
@@ -353,6 +354,32 @@ async def local_ai_adapter_contract(request: Request):
         **report.to_dict(), "simulated_provider": True,
         "remote_inference": False, "actual_ai_binding_used": False,
         "enforcement_ready": False, "real_tool_called": False,
+    }
+
+
+@router.get("/_local/demo/webcrypto-es256-probe")
+async def operator_local_webcrypto_es256_probe(request: Request):
+    """ISOLATED local signature test, never authorization or claim acceptance.
+
+    Requires existing operator authentication before attempting the second,
+    candidate crypto primitive. Never returns JWT claims or token details.
+    """
+    _identity(request, "OPERATOR", "approvals:read")
+    env = _local_env(request)
+    settings = {
+        name: str(getattr(env, name, "") or "")
+        for name in ("AGENT_JWT_ISSUER", "AGENT_JWT_AUDIENCE", "AGENT_JWKS_JSON")
+    }
+    signature_valid = await verify_es256_signature_webcrypto(
+        request.headers.get("x-probe-token", ""), settings,
+    )
+    return {
+        "signature_valid": signature_valid,
+        "claims_validated": False,
+        "authorization_ready": False,
+        "used_for_authentication": False,
+        "real_tool_called": False,
+        "local_only": True,
     }
 
 

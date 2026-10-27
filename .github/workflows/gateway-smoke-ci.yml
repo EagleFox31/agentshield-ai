@@ -155,6 +155,27 @@ jobs:
           done
           curl --fail --silent --show-error -X POST http://127.0.0.1:8787/_local/audit-contract > /tmp/agentshield-audit.json
           python -c 'import json; d=json.load(open("/tmp/agentshield-audit.json")); assert d["d1_audit_contract"]=="ok" and d["tenant_isolated"] and d["event_idempotent"] and d["nonce_once"] and not d["executed"]'
+          # RAIDER P0 isolated WebCrypto ES256 signature-only compatibility probe.
+          # Existing PyJWT auth still gates operator access. This returns NO
+          # caller identity, roles or authorization decisions.
+          operator_probe_token=$(cat .local-jwt/operator_valid.txt)
+          for fixture in valid bad_signature wrong_audience; do
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $operator_probe_token" \
+              -H "X-Probe-Token: $(cat ".local-jwt/$fixture.txt")" \
+              http://127.0.0.1:8787/_local/demo/webcrypto-es256-probe \
+              > "/tmp/webcrypto-probe-$fixture.json"
+          done
+          python -c 'import json; d=json.load(open("/tmp/webcrypto-probe-valid.json")); assert d["signature_valid"] is True and d["claims_validated"] is False and not d["authorization_ready"] and not d["used_for_authentication"] and not d["real_tool_called"] and d["local_only"]'
+          python -c 'import json; d=json.load(open("/tmp/webcrypto-probe-bad_signature.json")); assert d["signature_valid"] is False and d["claims_validated"] is False'
+          # Wrong audience still has a VALID signature; proves this SPIKE is
+          # NOT a JWT authenticator, and the real /v1/identity rejects it.
+          python -c 'import json; d=json.load(open("/tmp/webcrypto-probe-wrong_audience.json")); assert d["signature_valid"] is True and d["claims_validated"] is False'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "X-Probe-Token: $(cat .local-jwt/valid.txt)" \
+            http://127.0.0.1:8787/_local/demo/webcrypto-es256-probe)
+          test "$status" = 401
+          echo 'Local Pyodide WebCrypto ES256 signature parity checked with signed, forged and wrong-audience fixtures; NO auth replacement.'
           echo 'Local FastAPI, D1 redacted audit, one-time nonce and ES256 JWT passed in Python Workers.'
           # Separate operator and agent JWT trust roots, with a local-only mock.
           agent_token=$(cat .local-jwt/approval_agent.txt)
