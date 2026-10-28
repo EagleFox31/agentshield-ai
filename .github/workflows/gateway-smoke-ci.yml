@@ -19,6 +19,8 @@ on:
       - 'contracts/AuditRootRegistry.sol'
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
+      - 'src/agentshield/policy_registry.py'
+      - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
       - 'scripts/make_local_identity_fixture.py'
@@ -51,6 +53,8 @@ on:
       - 'contracts/AuditRootRegistry.sol'
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
+      - 'src/agentshield/policy_registry.py'
+      - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
       - 'scripts/make_local_identity_fixture.py'
@@ -130,6 +134,11 @@ jobs:
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0004_policy_snapshots.sql
+          # Seed only reviewed local fixture rules derived from the same
+          # demo PolicyEngine; never accept a policy upload from an agent.
+          uv run --locked --group worker python scripts/seed_local_policy_registry.py --output /tmp/agentshield-ci-policy.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=/tmp/agentshield-ci-policy.sql
           # Manually provision a tiny quota for the synthetic LOCAL tenant.
           # Never configure or invoke a real AI binding in the workflow.
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
@@ -549,6 +558,61 @@ jobs:
             http://127.0.0.1:8787/v1/test-executions)
           test "$status" = 404
           echo 'Bounded local mock gate enforced: audit, nonce, human exact grant, no real tool I/O.'
+          # Signed agent's tenant selects ACTIVE policy; request body has no
+          # policy_version or tenant override. Decisions are durably audited.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/_local/registry-decisions > /tmp/registry-read.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482"}' \
+            http://127.0.0.1:8787/_local/registry-decisions > /tmp/registry-review.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"cloud","operation":"delete_bucket","resource":"bucket/demo"}' \
+            http://127.0.0.1:8787/_local/registry-decisions > /tmp/registry-unknown.json
+          python - <<'PY_REGISTRY'
+          import json
+          from pathlib import Path
+          cases = {"read": ("allow", "EXPLICIT_ALLOW"),
+                   "review": ("require_approval", "HUMAN_APPROVAL_REQUIRED"),
+                   "unknown": ("deny", "NO_MATCHING_POLICY")}
+          hashes = set()
+          for name, expected in cases.items():
+              d = json.loads(Path(f"/tmp/registry-{name}.json").read_text())
+              assert (d["effect"], d["reason_codes"][0]) == expected, (name, d)
+              assert d["policy_version"] == "ci-local-policy-v1", (name, d)
+              assert len(d["policy_sha256"]) == 64, (name, d)
+              assert d["audit_recorded"] and d["authenticated"]
+              assert not d["execution_authorized"] and not d["executed"] and not d["enforcement_ready"]
+              hashes.add(d["policy_sha256"])
+          assert len(hashes) == 1
+          PY_REGISTRY
+          for fixture in bad_signature operator_valid; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+              http://127.0.0.1:8787/_local/registry-decisions)
+            test "$status" = 401
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","policy_version":"evil-policy"}' \
+            http://127.0.0.1:8787/_local/registry-decisions)
+          test "$status" = 422
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/v1/registry-decisions)
+          test "$status" = 404
+          echo 'Signed tenant policy v1 integrity, version, isolation and D1 audit verified locally. No public policy selection.'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
       - name: Preserve safe observed local Pyodide version evidence
