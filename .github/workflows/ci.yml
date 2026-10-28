@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
-          version: "0.10.0"
+          version: "0.12.3"
           python-version: "3.13"
       - name: Reject stale or missing committed uv.lock
         shell: bash
@@ -96,7 +96,7 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
-          version: '0.10.0'
+          version: '0.12.3'
           python-version: '3.13'
       - name: Reject undefined names and fatal syntax errors
         run: uv run --locked --group quality ruff check src tests scripts --select E9,F63,F7,F82
