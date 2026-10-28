@@ -135,9 +135,10 @@ jobs:
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0004_policy_snapshots.sql
-          # Seed only reviewed local fixture rules derived from the same
-          # demo PolicyEngine; never accept a policy upload from an agent.
-          uv run --locked --group worker python scripts/seed_local_policy_registry.py --output /tmp/agentshield-ci-policy.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0005_policy_activation_audit.sql
+          # Publish an INACTIVE reviewed V2 with identical rules, so old
+          # approvals must be invalidated solely by the version transition.
+          uv run --locked --group worker python scripts/seed_local_policy_registry.py --include-v2 --output /tmp/agentshield-ci-policy.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=/tmp/agentshield-ci-policy.sql
           # Manually provision a tiny quota for the synthetic LOCAL tenant.
           # Never configure or invoke a real AI binding in the workflow.
@@ -613,6 +614,77 @@ jobs:
             http://127.0.0.1:8787/v1/registry-decisions)
           test "$status" = 404
           echo 'Signed tenant policy v1 integrity, version, isolation and D1 audit verified locally. No public policy selection.'
+
+          # V1 grant remains approved before activation. CAS V1->V2 must
+          # invalidate it even though V2's rules are intentionally identical.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-A"}' \
+            http://127.0.0.1:8787/_local/demo/approval-requests > /tmp/activation-old-grant.json
+          old_activation_grant=$(python -c 'import json;d=json.load(open("/tmp/activation-old-grant.json"));assert d["policy_version"]=="ci-local-policy-v1";print(d["approval_id"])')
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $operator_token" \
+            "http://127.0.0.1:8787/_local/approvals/$old_activation_grant/approve" > /tmp/activation-old-grant-approved.json
+          target_sha=$(uv run --locked --group worker python -c 'from scripts.seed_local_policy_registry import reviewed_v2_digest;print(reviewed_v2_digest())')
+          activate_body=$(python -c 'import json,sys;print(json.dumps({"expected_version":"ci-local-policy-v1","target_version":"ci-local-policy-v2","target_sha256":sys.argv[1]}))' "$target_sha")
+          for fixture in valid approval_agent; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' -d "$activate_body" \
+              http://127.0.0.1:8787/_local/policies/activate)
+            test "$status" = 401
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $readonly_token" \
+            -H 'Content-Type: application/json' -d "$activate_body" \
+            http://127.0.0.1:8787/_local/policies/activate)
+          test "$status" = 403
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+            -d '{"expected_version":"ci-local-policy-v1","target_version":"ci-local-policy-v2","target_sha256":"0000000000000000000000000000000000000000000000000000000000000000"}' \
+            http://127.0.0.1:8787/_local/policies/activate)
+          test "$status" = 409
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_token" \
+            -H 'Content-Type: application/json' -d "$activate_body" \
+            http://127.0.0.1:8787/_local/policies/activate > /tmp/activation-v2.json
+          python - <<'PY_ACTIVATION'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/activation-v2.json").read_text())
+          assert d["previous_version"]=="ci-local-policy-v1" and d["active_version"]=="ci-local-policy-v2",d
+          assert d["audited"] and d["local_only"] and not d["enforcement_ready"] and not d["executed"]
+          assert d["audit_event_id"]==d["activation_id"] and len(d["policy_sha256"])==64
+          PY_ACTIVATION
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+            -d "$activate_body" http://127.0.0.1:8787/_local/policies/activate)
+          test "$status" = 409
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-A"}' \
+            "http://127.0.0.1:8787/_local/demo/approvals/$old_activation_grant/consume")
+          test "$status" = 409
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/_local/registry-decisions > /tmp/registry-post-activation.json
+          python -c 'import json;d=json.load(open("/tmp/registry-post-activation.json"));assert d["policy_version"]=="ci-local-policy-v2" and d["effect"]=="allow" and d["audit_recorded"]'
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d '{"fixture":"scenario-A"}' \
+            http://127.0.0.1:8787/_local/demo/approval-requests > /tmp/activation-new-grant.json
+          new_activation_grant=$(python -c 'import json;d=json.load(open("/tmp/activation-new-grant.json"));assert d["policy_version"]=="ci-local-policy-v2";print(d["approval_id"])')
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $operator_token" \
+            "http://127.0.0.1:8787/_local/approvals/$new_activation_grant/approve" > /tmp/activation-v2-grant-approved.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-A\",\"nonce\":\"post-activation-nonce-0001\",\"approval_id\":\"$new_activation_grant\"}" \
+            http://127.0.0.1:8787/_local/test-executions > /tmp/activation-v2-mock.json
+          python -c 'import json;d=json.load(open("/tmp/activation-v2-mock.json"));assert d["policy_version"]=="ci-local-policy-v2" and d["mock_result"]=="mock_supplier_write_dry_run" and not d["real_tool_called"]'
+          echo 'Atomic operator policy CAS V1->V2 audited; stale grants revoked and new mock grant works.'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
       - name: Preserve safe observed local Pyodide version evidence

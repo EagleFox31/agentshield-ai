@@ -8,7 +8,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
 from agentshield.approvals import (
@@ -29,6 +29,7 @@ from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISet
 
 from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.policy_registry import D1PolicyRegistry, PublishedPolicy
+from agentshield.policy_activation import activate_policy, PolicyActivationConflict
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
 from agentshield.webcrypto_jwt_candidate import verify_agent_jwt_webcrypto, require_bearer_webcrypto
@@ -100,6 +101,53 @@ def _data(row, now_ms: int) -> dict:
         "state": "expired" if row.expires_at_ms <= now_ms and row.state in ("pending", "approved") else row.state,
         "expires_at_ms": row.expires_at_ms,
         "policy_version": row.policy_version,
+        "executed": False,
+    }
+
+
+class PolicyActivationBody(BaseModel):
+    """No tenant, operator identity, arbitrary SQL or policy upload allowed."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_version: str = Field(
+        min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$"
+    )
+    target_version: str = Field(
+        min_length=8, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}$"
+    )
+    target_sha256: str = Field(
+        min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$"
+    )
+
+
+@router.post("/_local/policies/activate")
+async def local_policy_activation(body: PolicyActivationBody, request: Request):
+    """Operator-only CAS; activation and redacted audit share one D1 batch."""
+    operator = await _identity(request, "OPERATOR", "policies:activate")
+    store = _store(request)
+    try:
+        receipt = await activate_policy(
+            store,
+            D1PolicyRegistry(getattr(_local_env(request), "DB", None)),
+            operator,
+            expected_version=body.expected_version,
+            target_version=body.target_version,
+            target_sha256=body.target_sha256,
+            now_ms=_now(),
+        )
+    except PolicyActivationConflict as exc:
+        raise HTTPException(status_code=409, detail="Policy activation conflict") from exc
+    except AuditStorageError as exc:
+        raise HTTPException(status_code=503, detail="Policy activation storage unavailable") from exc
+    return {
+        "activation_id": receipt.activation_id,
+        "audit_event_id": receipt.audit_event_id,
+        "previous_version": receipt.previous_version,
+        "active_version": receipt.new_version,
+        "policy_sha256": receipt.new_sha256,
+        "audited": True,
+        "local_only": True,
+        "enforcement_ready": False,
         "executed": False,
     }
 
