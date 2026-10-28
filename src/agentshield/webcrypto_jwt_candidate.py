@@ -1,10 +1,10 @@
-"""Candidate full ES256 JWT verifier for Python Workers — NOT active.
+"""Native ES256 JWT verifier used by the experimental Python Worker gateway.
 
-Reuses the already tested native Web Crypto signature port and the exact
-claim-to-principal contract shared with the incumbent PyJWT verifier.
-Never call claim parsing until the signature was verified successfully.
+Web Crypto verifies the signature before existing claim-to-principal checks;
+there is no fallback to PyJWT for incoming Worker requests. Public tool
+authorization/execution remains NOT IMPLEMENTED and NOT DEPLOYED.
 
-No production route, policy, approval or tool execution uses this candidate.
+Module retains its historical name to avoid breaking tests and imports.
 """
 from __future__ import annotations
 
