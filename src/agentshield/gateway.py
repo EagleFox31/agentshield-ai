@@ -18,6 +18,7 @@ from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
+from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict
 from agentshield.policy_registry import D1PolicyRegistry, PolicyUnavailable
 from agentshield.approvals import D1ApprovalStore
 from agentshield.local_tool_gate import execute_local_mock, LocalDryRunAdapter, MockGateRejected
@@ -57,6 +58,14 @@ class LocalAction(BaseModel):
     tool: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     operation: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     resource: str = Field(min_length=1, max_length=128, pattern=r"^[a-z0-9_-]+/[a-zA-Z0-9_-]+$")
+
+
+class LocalIdempotentDecision(LocalAction):
+    """Caller-supplied opaque retry key is data, never an execution permit."""
+
+    request_id: str = Field(
+        min_length=16, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$"
+    )
 
 
 class LocalTestExecution(LocalAction):
@@ -196,6 +205,44 @@ async def local_test_execution(body: LocalTestExecution, request: Request) -> di
         raise HTTPException(status_code=503, detail="Security storage unavailable") from exc
     except MockGateRejected as exc:
         raise HTTPException(status_code=409, detail="Local mock execution denied") from exc
+
+
+@app.post("/_local/idempotent-decisions")
+async def local_idempotent_decision(
+    action: LocalIdempotentDecision, request: Request,
+) -> dict[str, object]:
+    """Authenticated, tenant-bound D1 request receipt + audit, no dispatch."""
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        db = getattr(env, "DB", None)
+        proposed = ToolAction(action.tool, action.operation, action.resource)
+        receipt = await decide_idempotently(
+            D1ApprovalStore(db), D1AuditRepository(db), D1PolicyRegistry(db),
+            agent, proposed, request_id=action.request_id,
+            now_ms=int(time.time() * 1000),
+        )
+    except DecisionReplayConflict as exc:
+        raise HTTPException(status_code=409, detail="Decision request conflict") from exc
+    except (AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Decision evidence unavailable") from exc
+    return {
+        "request_id": receipt.request_id,
+        "event_id": receipt.event_id,
+        "effect": receipt.effect,
+        "reason_codes": list(receipt.reason_codes),
+        "matched_rule_ids": list(receipt.matched_rule_ids),
+        "policy_version": receipt.policy_version,
+        "policy_sha256": receipt.policy_sha256,
+        "action_digest": receipt.action_sha256,
+        "replayed": receipt.replayed,
+        "audit_recorded": True,
+        "authenticated": True,
+        "execution_authorized": False,
+        "executed": False,
+        "enforcement_ready": False,
+        "local_only": True,
+    }
 
 
 @app.post("/_local/registry-decisions")
