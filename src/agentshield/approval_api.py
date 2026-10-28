@@ -27,7 +27,7 @@ from agentshield.detection import UntrustedSegment, ToolObservation, assess_thre
 from agentshield.ai_budget import D1AIBudget
 from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISettings
 
-from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE
+from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.policy_registry import D1PolicyRegistry, PublishedPolicy
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
