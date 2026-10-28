@@ -21,6 +21,7 @@ on:
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/policy_registry.py'
       - 'src/agentshield/egress_policy.py'
+      - 'src/agentshield/bound_transport_contract.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -56,6 +57,7 @@ on:
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/policy_registry.py'
       - 'src/agentshield/egress_policy.py'
+      - 'src/agentshield/bound_transport_contract.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -896,6 +898,57 @@ jobs:
             -H 'Content-Type: application/json' -d '{"scenario":"public"}' \
             http://127.0.0.1:8787/v1/egress-inspection)
           test "$status" = 404
+
+          # Synthetic peer/TLS observations are code-owned; passing this
+          # contract does NOT attest a connection or activate egress.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"scenario":"matched"}' \
+            http://127.0.0.1:8787/_local/transport-binding-inspection > /tmp/transport-matched.json
+          python - <<'PY_BINDING'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/transport-matched.json").read_text())
+          assert d["inspection"]=="synthetic_transport_contract_only"
+          assert d["capability_id"]=="demo-invoice-read-v1"
+          assert d["body_limit_bytes"]==16384 and d["elapsed_limit_ms"]==2000
+          assert d["simulation_only"] and d["local_only"]
+          assert not d["network_enabled"] and not d["transport_attested"]
+          assert not d["execution_authorized"] and not d["real_tool_called"] and not d["enforcement_ready"]
+          PY_BINDING
+          for scenario in peer-swap metadata-peer tls-sni bad-cert redirect proxy oversized timeout method-override; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' \
+              -d "{\"scenario\":\"$scenario\"}" \
+              http://127.0.0.1:8787/_local/transport-binding-inspection)
+            test "$status" = 409
+          done
+          for fixture in bad_signature operator_valid; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"scenario":"matched"}' \
+              http://127.0.0.1:8787/_local/transport-binding-inspection)
+            test "$status" = 401
+          done
+          for invalid in '{"scenario":"matched","connected_peer_ip":"127.0.0.1"}' \
+                         '{"scenario":"matched","verify_tls":false}' \
+                         '{"scenario":"matched","target_host":"evil.example"}'; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' -d "$invalid" \
+              http://127.0.0.1:8787/_local/transport-binding-inspection)
+            test "$status" = 422
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' -d '{"scenario":"matched"}' \
+            http://127.0.0.1:8787/v1/transport-binding-inspection)
+          test "$status" = 404
+          echo 'Worker/Pyodide synthetic peer and TLS contract verified, no live network or trusted transport attestation.'
+
           echo 'Worker/Pyodide offline egress policy: exact signed scope, fake public DNS; localhost, metadata, redirect, rebind and URL injection denied. NO HTTP transport.'
 
           echo 'Fenced signed-agent mock dispatch audited exactly once; duplicate, altered scope and operator impersonation denied.'
