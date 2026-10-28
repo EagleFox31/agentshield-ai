@@ -479,6 +479,76 @@ jobs:
             http://127.0.0.1:8787/v1/decisions)
           test "$status" = 404
           echo 'Authenticated local decisions are audited and never executable; public tool gateway remains disabled.'
+          # Mandatory local-only dispatch choke point: audit -> nonce ->
+          # exact action review -> safe stub; zero actual supplier writes.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","fixture":"scenario-A","nonce":"mock-read-00000001"}' \
+            http://127.0.0.1:8787/_local/test-executions > /tmp/mock-read.json
+          python -c 'import json;d=json.load(open("/tmp/mock-read.json"));assert d["effect"]=="allow" and d["mock_result"]=="mock_invoice_read" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","fixture":"scenario-A","nonce":"mock-read-00000001"}' \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 409
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482","fixture":"scenario-A","nonce":"mock-deny-00000001"}' \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 409
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482","fixture":"scenario-A","nonce":"mock-no-review-0001"}' \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 409
+          # A fresh signed approval must be consumed atomically and at most once.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" \
+            -H 'Content-Type: application/json' -d '{"fixture":"scenario-A"}' \
+            http://127.0.0.1:8787/_local/demo/approval-requests > /tmp/mock-approval-created.json
+          mock_approval_id=$(python -c 'import json;print(json.load(open("/tmp/mock-approval-created.json"))["approval_id"])')
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $operator_token" \
+            "http://127.0.0.1:8787/_local/approvals/$mock_approval_id/approve" > /tmp/mock-approval-reviewed.json
+          python -c 'import json;d=json.load(open("/tmp/mock-approval-reviewed.json"));assert d["state"]=="approved"'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-B\",\"nonce\":\"mock-wrong-fixture-0001\",\"approval_id\":\"$mock_approval_id\"}" \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 409
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-A\",\"nonce\":\"mock-approved-00000001\",\"approval_id\":\"$mock_approval_id\"}" \
+            http://127.0.0.1:8787/_local/test-executions > /tmp/mock-approved.json
+          python -c 'import json;d=json.load(open("/tmp/mock-approved.json"));assert d["effect"]=="require_approval" and d["mock_result"]=="mock_supplier_write_dry_run" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
+            -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-A\",\"nonce\":\"mock-approved-00000002\",\"approval_id\":\"$mock_approval_id\"}" \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 409
+          for fixture in bad_signature operator_valid; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"tool":"invoices","operation":"read","resource":"invoice/42","nonce":"mock-bad-jwt-0000001"}' \
+              http://127.0.0.1:8787/_local/test-executions)
+            test "$status" = 401
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","nonce":"mock-body-spoof-0001","scopes":["supplier:write"]}' \
+            http://127.0.0.1:8787/_local/test-executions)
+          test "$status" = 422
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","nonce":"mock-public-00000001"}' \
+            http://127.0.0.1:8787/v1/test-executions)
+          test "$status" = 404
+          echo 'Bounded local mock gate enforced: audit, nonce, human exact grant, no real tool I/O.'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
       - name: Preserve safe observed local Pyodide version evidence

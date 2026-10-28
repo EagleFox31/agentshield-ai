@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError,
@@ -17,6 +18,8 @@ from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
+from agentshield.approvals import D1ApprovalStore
+from agentshield.local_tool_gate import execute_local_mock, LocalDryRunAdapter, MockGateRejected
 import secrets
 import time
 from agentshield.audit import AuditEvent, action_digest
@@ -53,6 +56,19 @@ class LocalAction(BaseModel):
     tool: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     operation: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")
     resource: str = Field(min_length=1, max_length=128, pattern=r"^[a-z0-9_-]+/[a-zA-Z0-9_-]+$")
+
+
+class LocalTestExecution(LocalAction):
+    """Strict synthetic action only. Never accept arbitrary provider args."""
+
+    fixture: Literal["scenario-A", "scenario-B"] = "scenario-A"
+    nonce: str = Field(
+        min_length=8, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{7,95}$"
+    )
+    approval_id: str | None = Field(
+        default=None, min_length=16, max_length=96,
+        pattern=r"^approval-[0-9a-f]{32}$",
+    )
 
 
 _DEMO_PRINCIPAL = Principal("local-demo-agent", frozenset({"invoice:read"}))
@@ -152,6 +168,33 @@ async def local_platform_provenance(request: Request) -> dict[str, object]:
         "enforcement_ready": False,
         "real_tool_called": False,
     }
+
+
+@app.post("/_local/test-executions")
+async def local_test_execution(body: LocalTestExecution, request: Request) -> dict[str, object]:
+    """Never execute an external tool; route only the audited mock adapter.
+
+    Both the JWT and local D1 are mandatory. Client JSON cannot grant scopes
+    or change policy; an approval is bound to the exact fixture and caller.
+    """
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        database = getattr(env, "DB", None)
+        repo = D1AuditRepository(database)
+        approvals = D1ApprovalStore(database)
+        return await execute_local_mock(
+            repo, approvals, agent,
+            ToolAction(body.tool, body.operation, body.resource),
+            fixture=body.fixture, nonce=body.nonce,
+            approval_id=body.approval_id,
+            now_ms=int(time.time() * 1000),
+            adapter=LocalDryRunAdapter(),
+        )
+    except AuditStorageError as exc:
+        raise HTTPException(status_code=503, detail="Security storage unavailable") from exc
+    except MockGateRejected as exc:
+        raise HTTPException(status_code=409, detail="Local mock execution denied") from exc
 
 
 @app.post("/_local/decisions")
