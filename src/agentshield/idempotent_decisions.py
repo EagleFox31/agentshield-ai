@@ -31,6 +31,9 @@ _INSERT_RATE_SLOT = (
     "SELECT 1 FROM decision_requests WHERE tenant_id=? AND request_id=?) "
     "AND (SELECT COUNT(*) FROM tenant_decision_rate_slots "
     "WHERE tenant_id=? AND window_start_ms=?) < ? "
+    "AND EXISTS(SELECT 1 FROM active_policy_versions WHERE "
+    "tenant_id=? AND version=? AND activated_at_ms=? "
+    "AND COALESCE(activation_marker,'')=?) "
     "ON CONFLICT(tenant_id,request_id) DO NOTHING"
 )
 
@@ -159,6 +162,7 @@ async def decide_idempotently(
             agent.tenant_id, window, request_id, now_ms,
             agent.tenant_id, request_id, agent.tenant_id, window,
             _MAX_NEW_DECISIONS_PER_TENANT_WINDOW,
+            agent.tenant_id, active.version, epoch, marker,
         )),
         (_INSERT, (
             agent.tenant_id, request_id, agent.principal.id, digest,
