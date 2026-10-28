@@ -123,6 +123,8 @@ def _public_addresses(addresses: Sequence[str]) -> frozenset[str]:
         # Do not permit IPv4-mapped, scoped, private, metadata, loopback,
         # reserved/documentation, link-local or unspecified destinations.
         if (not ip.is_global
+            or ip.is_multicast or ip.is_reserved or ip.is_link_local
+            or ip.is_loopback or ip.is_unspecified
             or getattr(ip, "ipv4_mapped", None) is not None
             or getattr(ip, "scope_id", None) is not None):
             raise EgressRejected("Non-global DNS address")
