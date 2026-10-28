@@ -179,6 +179,28 @@ jobs:
           # Existing PyJWT auth still gates operator access. This returns NO
           # caller identity, roles or authorization decisions.
           operator_probe_token=$(cat .local-jwt/operator_valid.txt)
+          # Validate the versions ACTUALLY imported by the local Pyodide Worker.
+          # Operator-only, local-only, no environment or secret disclosure.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_probe_token" \
+            http://127.0.0.1:8787/_local/platform-provenance \
+            > /tmp/agentshield-worker-platform.json
+          python - <<'PY_RUNTIME'
+          import json
+          from pathlib import Path
+          observed = json.loads(Path("/tmp/agentshield-worker-platform.json").read_text())
+          assert observed["local_only"] is True
+          assert observed["enforcement_ready"] is False
+          assert observed["real_tool_called"] is False
+          assert observed["python_version"]
+          assert set(observed["packages"]) == {"fastapi", "starlette", "pydantic", "pydantic_core"}
+          print("WORKER_RUNTIME_BEGIN")
+          print(json.dumps(observed, sort_keys=True, separators=(",", ":")))
+          print("WORKER_RUNTIME_END")
+          PY_RUNTIME
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:8787/_local/platform-provenance)
+          test "$status" = 401
           for fixture in valid bad_signature wrong_audience; do
             curl --fail --silent --show-error \
               -H "Authorization: Bearer $operator_probe_token" \
