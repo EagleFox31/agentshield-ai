@@ -112,6 +112,29 @@ class PolicyActivationTests(unittest.TestCase):
         with self.assertRaises(PolicyUnavailable):
             self.activate(operator=wrong)
 
+    def test_database_audit_failure_rolls_back_activation(self):
+        # Real SQLite transaction, unlike a mock that fails before writing.
+        self.db.execute(
+            "CREATE TRIGGER prevent_activation_audit BEFORE INSERT "
+            "ON audit_events "
+            "WHEN NEW.reason_codes_json LIKE '%POLICY_VERSION_ACTIVATED%' "
+            "BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END"
+        )
+        with self.assertRaises(AuditStorageError):
+            self.activate()
+        self.assertEqual(
+            run(self.registry.load_active("ci_local")).version,
+            "ci-local-policy-v1",
+        )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM policy_activation_history").fetchone()[0],
+            0,
+        )
+        self.assertEqual(
+            self.db.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0],
+            0,
+        )
+
     def test_storage_failure_keeps_previous_version(self):
         class Broken:
             first = self.store.first
