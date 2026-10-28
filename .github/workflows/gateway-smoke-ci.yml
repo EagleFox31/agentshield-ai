@@ -29,6 +29,8 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
+      - 'docs/WORKER_RUNTIME_BASELINE.json'
+      - 'scripts/check_worker_provenance.py'
       - '.github/workflows/gateway-smoke-ci.yml'
   push:
     branches: [main]
@@ -59,6 +61,8 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
+      - 'docs/WORKER_RUNTIME_BASELINE.json'
+      - 'scripts/check_worker_provenance.py'
       - '.github/workflows/gateway-smoke-ci.yml'
   workflow_dispatch:
 
@@ -198,6 +202,20 @@ jobs:
           print(json.dumps(observed, sort_keys=True, separators=(",", ":")))
           print("WORKER_RUNTIME_END")
           PY_RUNTIME
+          python scripts/check_worker_provenance.py /tmp/agentshield-worker-platform.json
+          # Check that a silent Cloudflare/Pyodide runtime change is BLOCKING.
+          python - <<'PY_PLATFORM_NEG'
+          import json
+          from pathlib import Path
+          p = Path("/tmp/agentshield-worker-platform.json")
+          d = json.loads(p.read_text())
+          d["pyodide_version"] = "0.0.0-untrusted"
+          Path("/tmp/agentshield-worker-platform-drift.json").write_text(json.dumps(d))
+          PY_PLATFORM_NEG
+          if python scripts/check_worker_provenance.py /tmp/agentshield-worker-platform-drift.json; then
+            echo "Provenance drift gate erroneously accepted the wrong Pyodide version" >&2
+            exit 1
+          fi
           status=$(curl --silent -o /dev/null -w '%{http_code}' \
             http://127.0.0.1:8787/_local/platform-provenance)
           test "$status" = 401
@@ -396,6 +414,15 @@ jobs:
             http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox-third.json
           python -c 'import json; d=json.load(open("/tmp/worker-ai-sandbox-third.json")); assert d["model_status"]=="triage_unavailable" and d["policy_effect"]=="deny" and not d["remote_inference"]'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
+
+      - name: Preserve safe observed local Pyodide version evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-worker-runtime-provenance
+          path: /tmp/agentshield-worker-platform.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Print diagnostic on failure
         if: failure()
         run: |
