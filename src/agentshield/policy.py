@@ -4,6 +4,7 @@ The caller MUST authenticate the principal independently of the agent/model
 payload. This pure engine does not execute tools, approve requests, call LLMs,
 write logs or interact with blockchains.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -36,8 +37,10 @@ class ToolAction:
     resource: str
 
     def __post_init__(self) -> None:
-        if any(not value or not value.strip()
-               for value in (self.tool, self.operation, self.resource)):
+        if any(
+            not value or not value.strip()
+            for value in (self.tool, self.operation, self.resource)
+        ):
             raise ValueError("Tool, operation and resource must be non-empty")
 
 
@@ -52,10 +55,20 @@ class Rule:
     effect: Effect
 
     def __post_init__(self) -> None:
-        if any(not value or not value.strip() for value in (
-                self.id, self.principal_id, self.tool,
-                self.operation, self.resource, self.required_scope)):
-            raise ValueError("Rules require explicit, non-empty identities, actions, resources and scope")
+        if any(
+            not value or not value.strip()
+            for value in (
+                self.id,
+                self.principal_id,
+                self.tool,
+                self.operation,
+                self.resource,
+                self.required_scope,
+            )
+        ):
+            raise ValueError(
+                "Rules require explicit, non-empty identities, actions, resources and scope"
+            )
         if not isinstance(self.effect, Effect):
             raise ValueError("Rule effect must be an Effect enum")
 
@@ -97,27 +110,34 @@ class PolicyEngine:
         # not hold the required scope listed on the denying rule.
         denies = [rule for rule in matching if rule.effect == Effect.DENY]
         if denies:
-            return Decision(Effect.DENY, ("EXPLICIT_DENY",), tuple(r.id for r in denies))
-
-        eligible = [rule for rule in matching if rule.required_scope in principal.scopes]
-        if not eligible:
             return Decision(
-                Effect.DENY, ("REQUIRED_SCOPE_MISSING",),
-                tuple(rule.id for rule in matching)
+                Effect.DENY, ("EXPLICIT_DENY",), tuple(r.id for r in denies)
             )
 
-        approvals = [rule for rule in eligible if rule.effect == Effect.REQUIRE_APPROVAL]
+        eligible = [
+            rule for rule in matching if rule.required_scope in principal.scopes
+        ]
+        if not eligible:
+            return Decision(
+                Effect.DENY,
+                ("REQUIRED_SCOPE_MISSING",),
+                tuple(rule.id for rule in matching),
+            )
+
+        approvals = [
+            rule for rule in eligible if rule.effect == Effect.REQUIRE_APPROVAL
+        ]
         if approvals:
             return Decision(
-                Effect.REQUIRE_APPROVAL, ("HUMAN_APPROVAL_REQUIRED",),
-                tuple(rule.id for rule in approvals)
+                Effect.REQUIRE_APPROVAL,
+                ("HUMAN_APPROVAL_REQUIRED",),
+                tuple(rule.id for rule in approvals),
             )
 
         allows = [rule for rule in eligible if rule.effect == Effect.ALLOW]
         if allows:
             return Decision(
-                Effect.ALLOW, ("EXPLICIT_ALLOW",),
-                tuple(rule.id for rule in allows)
+                Effect.ALLOW, ("EXPLICIT_ALLOW",), tuple(rule.id for rule in allows)
             )
 
         return Decision(Effect.DENY, ("NO_PERMITTING_POLICY",), ())
