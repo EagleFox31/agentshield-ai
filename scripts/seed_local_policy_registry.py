@@ -57,8 +57,8 @@ def reviewed_v2_sql() -> str:
         "INSERT OR IGNORE INTO policy_versions "
         "(tenant_id,version,sha256,created_at_ms,rules_json) VALUES ("
         f"{sql_literal(TENANT)},{sql_literal(REVIEWED_V2)},"
-        f"{sql_literal(digest)},1790000000001,{sql_literal(rules_json)});\\n"
-    ).replace("\\\\n", "\\n")
+        f"{sql_literal(digest)},1790000000001,{sql_literal(rules_json)});"
+    ) + chr(10)
 
 
 def main() -> None:
