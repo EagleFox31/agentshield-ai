@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from agentshield.egress_policy import (
-    DisabledNetworkTransport, EgressRejected, _LOCAL_INVOICE_CAPABILITY,
+    EgressRejected, _LOCAL_INVOICE_CAPABILITY,
     _public_addresses, inspect_egress,
 )
 from agentshield.policy import PolicyEngine, Principal, ToolAction
@@ -122,4 +122,4 @@ def inspect_synthetic_transport(
 
 def send_live_network(*_args: object, **_kwargs: object) -> None:
     """Explicit denial: real IP-pinned TLS egress is not integrated."""
-    DisabledNetworkTransport().send(None)  # type: ignore[arg-type]
+    raise EgressRejected("Live TLS-pinned network transport unavailable")
