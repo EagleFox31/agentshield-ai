@@ -26,6 +26,11 @@ on:
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
       - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
+      - 'docs/WORKER_RUNTIME_BASELINE.json'
+      - 'scripts/check_worker_provenance.py'
       - '.github/workflows/gateway-smoke-ci.yml'
   push:
     branches: [main]
@@ -53,6 +58,11 @@ on:
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
       - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
+      - 'docs/WORKER_RUNTIME_BASELINE.json'
+      - 'scripts/check_worker_provenance.py'
       - '.github/workflows/gateway-smoke-ci.yml'
   workflow_dispatch:
 
@@ -101,16 +111,28 @@ jobs:
         with:
           version: '0.12.3'
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install reviewed npm lock (no floating Wrangler)
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files --error-unmatch package-lock.json >/dev/null
+          npm ci --ignore-scripts --no-audit --no-fund
+          node -e 'const p=require("./node_modules/wrangler/package.json"); if(p.version!=="4.154.0") process.exit(1)'
+          ./node_modules/.bin/wrangler --version
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
         run: uv run --locked --group worker python scripts/make_local_identity_fixture.py
       - name: Apply portable audit schema to LOCAL D1 only
         run: |
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
           # Manually provision a tiny quota for the synthetic LOCAL tenant.
           # Never configure or invoke a real AI binding in the workflow.
-          npx --yes wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
@@ -161,6 +183,42 @@ jobs:
           # Existing PyJWT auth still gates operator access. This returns NO
           # caller identity, roles or authorization decisions.
           operator_probe_token=$(cat .local-jwt/operator_valid.txt)
+          # Validate the versions ACTUALLY imported by the local Pyodide Worker.
+          # Operator-only, local-only, no environment or secret disclosure.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $operator_probe_token" \
+            http://127.0.0.1:8787/_local/platform-provenance \
+            > /tmp/agentshield-worker-platform.json
+          python - <<'PY_RUNTIME'
+          import json
+          from pathlib import Path
+          observed = json.loads(Path("/tmp/agentshield-worker-platform.json").read_text())
+          assert observed["local_only"] is True
+          assert observed["enforcement_ready"] is False
+          assert observed["real_tool_called"] is False
+          assert observed["python_version"]
+          assert set(observed["packages"]) == {"fastapi", "starlette", "pydantic", "pydantic_core"}
+          print("WORKER_RUNTIME_BEGIN")
+          print(json.dumps(observed, sort_keys=True, separators=(",", ":")))
+          print("WORKER_RUNTIME_END")
+          PY_RUNTIME
+          python scripts/check_worker_provenance.py /tmp/agentshield-worker-platform.json
+          # Check that a silent Cloudflare/Pyodide runtime change is BLOCKING.
+          python - <<'PY_PLATFORM_NEG'
+          import json
+          from pathlib import Path
+          p = Path("/tmp/agentshield-worker-platform.json")
+          d = json.loads(p.read_text())
+          d["pyodide_version"] = "0.0.0-untrusted"
+          Path("/tmp/agentshield-worker-platform-drift.json").write_text(json.dumps(d))
+          PY_PLATFORM_NEG
+          if python scripts/check_worker_provenance.py /tmp/agentshield-worker-platform-drift.json; then
+            echo "Provenance drift gate erroneously accepted the wrong Pyodide version" >&2
+            exit 1
+          fi
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            http://127.0.0.1:8787/_local/platform-provenance)
+          test "$status" = 401
           for fixture in valid bad_signature wrong_audience; do
             curl --fail --silent --show-error \
               -H "Authorization: Bearer $operator_probe_token" \
@@ -356,6 +414,15 @@ jobs:
             http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox-third.json
           python -c 'import json; d=json.load(open("/tmp/worker-ai-sandbox-third.json")); assert d["model_status"]=="triage_unavailable" and d["policy_effect"]=="deny" and not d["remote_inference"]'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
+
+      - name: Preserve safe observed local Pyodide version evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-worker-runtime-provenance
+          path: /tmp/agentshield-worker-platform.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Print diagnostic on failure
         if: failure()
         run: |

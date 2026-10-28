@@ -111,6 +111,47 @@ async def authenticated_agent_identity(request: Request) -> dict[str, object]:
     }
 
 
+@app.get("/_local/platform-provenance")
+async def local_platform_provenance(request: Request) -> dict[str, object]:
+    """Read-only LOCAL CI evidence; authenticated operator, no environment dump.
+
+    Pyodide selection is Cloudflare-controlled by compatibility date. We
+    report observed versions, not claim that the host uv.lock freezes them.
+    """
+    _require_local_smoke(request)
+    await _verified_local_identity(request, "OPERATOR", "approvals:read")
+    import sys
+    from importlib import metadata
+
+    versions = {}
+    try:
+        for name in ("fastapi", "starlette", "pydantic", "pydantic_core"):
+            versions[name] = metadata.version(name)
+    except metadata.PackageNotFoundError as exc:
+        raise HTTPException(status_code=503, detail="Runtime metadata incomplete") from exc
+
+    pyodide_version = None
+    try:
+        import pyodide
+        pyodide_version = getattr(pyodide, "__version__", None)
+    except ImportError:
+        pass
+    if not isinstance(pyodide_version, str) or not pyodide_version:
+        try:
+            pyodide_version = metadata.version("pyodide")
+        except metadata.PackageNotFoundError:
+            pyodide_version = None
+
+    return {
+        "python_version": sys.version.split(" ", 1)[0],
+        "pyodide_version": pyodide_version,
+        "packages": versions,
+        "local_only": True,
+        "enforcement_ready": False,
+        "real_tool_called": False,
+    }
+
+
 @app.post("/_local/policy")
 async def local_policy(action: LocalAction, request: Request) -> dict[str, object]:
     _require_local_smoke(request)
