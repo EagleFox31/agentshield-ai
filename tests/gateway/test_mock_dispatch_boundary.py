@@ -125,26 +125,28 @@ class FencedMockDispatchTests(unittest.TestCase):
         self.assertEqual(self.attempts(), 0)
         self.assertEqual(self.adapter.calls, [])
 
-    def test_missing_queue_claim_or_decision_evidence_blocks_stub(self):
-        for which in ("decision_event_id", "queue_audit_event_id",
-                      "claim_audit_event_id"):
-            with self.subTest(which=which):
-                # Rebuild isolated command between audit-tampering cases.
-                self.db.execute("SAVEPOINT evidence_case")
-                cmd = self.enqueue()
-                self.claim(cmd.command_id)
-                row = self.db.execute(
-                    "SELECT * FROM local_command_outbox"
-                ).fetchone()
-                self.db.execute(
-                    "DELETE FROM audit_events WHERE event_id=?", (row[which],),
-                )
-                with self.assertRaises(AuditStorageError):
-                    self.dispatch(cmd.command_id)
-                self.assertEqual(self.attempts(), 0)
-                self.assertEqual(self.adapter.calls, [])
-                self.db.execute("ROLLBACK TO SAVEPOINT evidence_case")
-                self.db.execute("RELEASE SAVEPOINT evidence_case")
+    def check_missing_evidence(self, which):
+        cmd = self.enqueue()
+        self.claim(cmd.command_id)
+        row = self.db.execute(
+            "SELECT * FROM local_command_outbox"
+        ).fetchone()
+        self.db.execute(
+            "DELETE FROM audit_events WHERE event_id=?", (row[which],),
+        )
+        with self.assertRaises(AuditStorageError):
+            self.dispatch(cmd.command_id)
+        self.assertEqual(self.attempts(), 0)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_missing_original_decision_audit_blocks_stub(self):
+        self.check_missing_evidence("decision_event_id")
+
+    def test_missing_queue_audit_blocks_stub(self):
+        self.check_missing_evidence("queue_audit_event_id")
+
+    def test_missing_claim_audit_blocks_stub(self):
+        self.check_missing_evidence("claim_audit_event_id")
 
     def test_audit_insert_failure_rolls_back_dispatch_reservation(self):
         cmd = self.enqueue()
