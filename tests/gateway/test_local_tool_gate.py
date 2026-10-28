@@ -81,6 +81,10 @@ class LocalMockExecutionTests(unittest.TestCase):
         with self.assertRaises(MockGateRejected):
             self.invoke(ToolAction("cloud", "delete_bucket", "bucket/demo"))
         self.assertEqual(self.adapter.calls, [])
+        # Unknown actions must still leave a redacted DENY audit event.
+        self.assertEqual(self.db.execute(
+            "SELECT effect FROM audit_events ORDER BY occurred_at_ms LIMIT 1"
+        ).fetchone()[0], "deny")
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM used_action_nonces").fetchone()[0], 0)
 
     def test_missing_scope_rejects_supplier_mutation(self):
