@@ -6,6 +6,7 @@
 
 - Python **3.13** for the developer and CI verification shown here; `pyproject.toml` supports older CPython, but the CI reproducibility claim specifically covers Python 3.13.
 - `uv==0.12.3` with the version-controlled root [`uv.lock`](../uv.lock).
+- Node.js **22** plus `npm ci --ignore-scripts --no-audit --no-fund`, using the reviewed root `package-lock.json` and local **Wrangler 4.154.0**. No unbounded `npx --yes wrangler` installs. See [Worker provenance](WORKER_TOOLCHAIN_PROVENANCE.md) and its fail-closed Pyodide baseline.
 - Cloudflare `wrangler.jsonc` compatibility date **2026-10-26**, the `python_workers` flag and a **LOCAL-only** D1 binding with the all-zero placeholder ID. The platform's Pyodide and package repository are chosen by Cloudflare based on the compatibility date; `uv.lock` controls host resolution, **not every separate Pyodide wheel**.
 - Native Web Crypto ES256 verifies incoming JWTs in the Python Worker. `PyJWT` and patched `cryptography` are used only by host tests and local synthetic JWT fixture generation.
 
@@ -46,7 +47,7 @@ Follow the **existing** [gateway smoke workflow](../.github/workflows/gateway-sm
 4. Check the vulnerability scan and CycloneDX SBOM artifact on the exact PR commit. Vulnerability warnings must not be suppressed to force green CI.
 5. Keep dependency update proposals reviewed: Dependabot may open PRs, but there is no automatic merge. Document any platform-only exceptions and link the relevant issue.
 
-**Important limit:** `uv.lock` gives reproducible resolutions and package hashes for `uv`-managed host environments. It does not by itself freeze Cloudflare's separately selected Pyodide runtime/wheels, any transitive `npx --yes wrangler` downloads, the OS container, or the remote Cloudflare platform. Therefore a green `uv lock --check` alone is insufficient for the Worker. Full release-grade build provenance and an independently reviewed platform freeze remain follow-up gates.
+**Important limit:** `uv.lock` gives reproducible resolutions and package hashes for `uv`-managed host environments, and `package-lock.json` fixes the local Wrangler/npm dependency graph. Cloudflare's actual Pyodide runtime and wheels still come from a separately managed platform. A signed-operator local probe checks the pinned **observed Pyodide/Python/package baseline** and fails on drift, but cannot freeze Cloudflare internals or establish complete binary build provenance. See [the evidence and residual risk](WORKER_TOOLCHAIN_PROVENANCE.md).
 
 ## Security / contribution checklist
 
