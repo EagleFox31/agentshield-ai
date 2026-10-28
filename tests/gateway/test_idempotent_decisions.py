@@ -145,6 +145,10 @@ class IdempotentDecisionTests(unittest.TestCase):
         with self.assertRaises(DecisionReplayConflict):
             self.decide(store=ConcurrentStore())
         self.assertEqual(self.counts(), (0, 0))
+        # A lost policy-generation race must not leave an orphan rate slot.
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM tenant_decision_rate_slots"
+        ).fetchone()[0], 0)
 
     def test_failure_in_audit_insert_rolls_back_receipt(self):
         self.db.execute(
