@@ -9,6 +9,7 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
       - '.github/dependabot.yml'
+      - 'uv.lock'
   pull_request:
     paths:
       - 'src/**'
@@ -38,6 +39,31 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m unittest discover -s tests -v
+
+  dependency-lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.10.0"
+          python-version: "3.13"
+      - name: Resolve lock with uv (bootstrap prints generated lock)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv lock --python 3.13
+          if ! git ls-files --error-unmatch uv.lock >/dev/null 2>&1; then
+            echo LOCK_GENERATION_BEGIN_V1
+            cat uv.lock
+            echo LOCK_GENERATION_END_V1
+            echo "Lockfile not committed. Bootstrap artifact is printed for review."
+            exit 1
+          fi
+          uv lock --check
 
   dependency-integrity:
     runs-on: ubuntu-latest
