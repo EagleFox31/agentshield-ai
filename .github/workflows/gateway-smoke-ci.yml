@@ -67,27 +67,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.12.3'
           python-version: '3.13'
-      - name: Install HTTP smoke dependencies
-        run: python -m pip install -e . 'httpx>=0.28,<0.29' 'PyJWT==2.15.1' 'cryptography==50.0.2'
+      - name: Install locked host HTTP + signed fixture dependencies
+        run: uv sync --locked --group test --python 3.13
       - name: Run independent HTTP + fake-D1 regression suite
         env:
           PYTHONPATH: src
-        run: python -m unittest discover -s tests/gateway -v
+        run: uv run --locked --group test python -m unittest discover -s tests/gateway -v
       - name: Assert the no-network invoice injection demo
         env:
           PYTHONPATH: src
-        run: python scripts/demo_invoice_attack.py --assert-secure
+        run: uv run --locked --group test python scripts/demo_invoice_attack.py --assert-secure
       - name: Assert Merkle inclusion and history-tampering regressions offline
         env:
           PYTHONPATH: src
-        run: python scripts/demo_merkle_proofs.py --assert-secure
+        run: uv run --locked --group test python scripts/demo_merkle_proofs.py --assert-secure
       - name: Evaluate synthetic detection confusion matrix without an LLM
         env:
           PYTHONPATH: src
-        run: python scripts/evaluate_detection.py --assert-contract
+        run: uv run --locked --group test python scripts/evaluate_detection.py --assert-contract
 
   python-worker-d1-local:
     runs-on: ubuntu-latest
@@ -98,9 +99,10 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.12.3'
           python-version: '3.13'
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
-        run: uv run --group worker python scripts/make_local_identity_fixture.py
+        run: uv run --locked --group worker python scripts/make_local_identity_fixture.py
       - name: Apply portable audit schema to LOCAL D1 only
         run: |
           npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
@@ -113,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
+          uv run --locked --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           ready=0
