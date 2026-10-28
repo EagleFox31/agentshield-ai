@@ -20,6 +20,7 @@ on:
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/policy_registry.py'
+      - 'src/agentshield/egress_policy.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -54,6 +55,7 @@ on:
       - 'scripts/demo_invoice_attack.py'
       - 'src/agentshield/approval*.py'
       - 'src/agentshield/policy_registry.py'
+      - 'src/agentshield/egress_policy.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -837,6 +839,65 @@ jobs:
             -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
             "http://127.0.0.1:8787/v1/commands/$command_id/dry-run")
           test "$status" = 404
+
+          # Pure offline network-policy inspection: addresses come only from
+          # hardcoded test fixtures, no live DNS lookup or HTTP tool dispatch.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"scenario":"public"}' \
+            http://127.0.0.1:8787/_local/egress-inspection > /tmp/egress-safe.json
+          python - <<'PY_EGRESS'
+          import json
+          from pathlib import Path
+          d=json.loads(Path("/tmp/egress-safe.json").read_text())
+          assert d["inspection"]=="passed_offline_only",d
+          assert d["capability_id"]=="demo-invoice-read-v1" and d["address_count"]==2
+          assert not d["network_enabled"] and not d["transport_pinned"]
+          assert not d["execution_authorized"] and not d["real_tool_called"]
+          assert not d["enforcement_ready"] and d["local_only"]
+          PY_EGRESS
+          for scenario in loopback mixed redirect rebind; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' \
+              -d "{\"scenario\":\"$scenario\"}" \
+              http://127.0.0.1:8787/_local/egress-inspection)
+            test "$status" = 409
+          done
+          for fixture in bad_signature operator_valid; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"scenario":"public"}' \
+              http://127.0.0.1:8787/_local/egress-inspection)
+            test "$status" = 401
+          done
+          # A second correctly signed agent with invoice:read is ALSO
+          # entitled to the non-executing inspection; its wider supplier
+          # scope does not itself prohibit invoice reads.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"scenario":"public"}' \
+            http://127.0.0.1:8787/_local/egress-inspection > /tmp/egress-second-agent.json
+          python -c 'import json;d=json.load(open("/tmp/egress-second-agent.json"));assert not d["network_enabled"] and not d["execution_authorized"]'
+          for invalid in '{"scenario":"public","url":"http://169.254.169.254"}' \
+                         '{"scenario":"public","resolved_addresses":["8.8.8.8"]}' \
+                         '{"scenario":"public","allow_redirects":true}'; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' -d "$invalid" \
+              http://127.0.0.1:8787/_local/egress-inspection)
+            test "$status" = 422
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' -d '{"scenario":"public"}' \
+            http://127.0.0.1:8787/v1/egress-inspection)
+          test "$status" = 404
+          echo 'Worker/Pyodide offline egress policy: exact signed scope, fake public DNS; localhost, metadata, redirect, rebind and URL injection denied. NO HTTP transport.'
+
           echo 'Fenced signed-agent mock dispatch audited exactly once; duplicate, altered scope and operator impersonation denied.'
           curl --fail --silent --show-error -X POST \
             -H "Authorization: Bearer $operator_token" \

@@ -20,6 +20,10 @@ from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
 from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict, DecisionRateLimited
 from agentshield.mock_dispatch_boundary import dispatch_claimed_invoice_mock, MockDispatchRejected
+from agentshield.egress_policy import (
+    EgressRejected, _LOCAL_INVOICE_CAPABILITY, inspect_egress,
+)
+from agentshield.demo_invoice import INVOICE
 from agentshield.local_command_outbox import (
     queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
 )
@@ -219,6 +223,65 @@ class LocalCommandQueueRequest(BaseModel):
         min_length=16, max_length=96,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$",
     )
+
+
+class LocalEgressFixture(BaseModel):
+    """Fixed injection scenarios; no client-provided URL, IP, DNS or policy."""
+
+    model_config = ConfigDict(extra="forbid")
+    scenario: Literal["public", "loopback", "mixed", "redirect", "rebind"]
+
+
+@app.post("/_local/egress-inspection")
+async def local_egress_inspection(
+    body: LocalEgressFixture, request: Request,
+) -> dict[str, object]:
+    """Signed-tenant offline SSRF inspection; NEVER opens network I/O.
+
+    All candidate destinations and fake DNS outcomes are code-owned. This
+    preview does not represent an address-pinned TLS provider adapter.
+    """
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        current = await D1PolicyRegistry(getattr(env, "DB", None)).load_active(
+            agent.tenant_id
+        )
+        fake_addresses = {
+            "public": ("8.8.8.8", "2001:4860:4860::8888"),
+            "loopback": ("127.0.0.1",),
+            "mixed": ("8.8.8.8", "169.254.169.254"),
+            "redirect": ("8.8.8.8",),
+            "rebind": ("8.8.8.8",),
+        }
+        inspection = inspect_egress(
+            agent.principal, INVOICE, current.engine,
+            candidate_url=_LOCAL_INVOICE_CAPABILITY.url,
+            resolved_addresses=fake_addresses[body.scenario],
+            redirect_url=(
+                "http://169.254.169.254/latest/meta-data/"
+                if body.scenario == "redirect" else None
+            ),
+            next_addresses=(
+                ("127.0.0.1",) if body.scenario == "rebind" else None
+            ),
+        )
+    except EgressRejected as exc:
+        raise HTTPException(status_code=409, detail="Unsafe egress inspection") from exc
+    except AuditStorageError as exc:
+        raise HTTPException(status_code=503, detail="Policy evidence unavailable") from exc
+    return {
+        "inspection": "passed_offline_only",
+        "capability_id": inspection.capability_id,
+        "action_digest": inspection.action_digest,
+        "address_count": inspection.address_count,
+        "network_enabled": False,
+        "transport_pinned": False,
+        "execution_authorized": False,
+        "real_tool_called": False,
+        "enforcement_ready": False,
+        "local_only": True,
+    }
 
 
 @app.post("/_local/commands/{command_id}/dry-run")
