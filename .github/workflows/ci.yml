@@ -10,6 +10,7 @@ on:
       - '.github/workflows/ci.yml'
       - '.github/dependabot.yml'
       - 'uv.lock'
+      - 'docs/REPRODUCIBLE_DEVELOPMENT.md'
   pull_request:
     paths:
       - 'src/**'
@@ -99,10 +100,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: '3.12'
-      - name: Install pinned community linter
-        run: python -m pip install --disable-pip-version-check 'ruff==0.17.2'
-      - name: Reject undefined names and fatal syntax errors in existing Python sources
-        run: ruff check src tests scripts --select E9,F63,F7,F82
+          version: '0.10.0'
+          python-version: '3.13'
+      - name: Reject undefined names and fatal syntax errors
+        run: uv run --locked --group quality ruff check src tests scripts --select E9,F63,F7,F82
+      - name: Enforce formatting of the core security policy engine
+        run: uv run --locked --group quality ruff format --check --diff src/agentshield/policy.py
+      - name: Strict type-check the core security policy engine
+        run: uv run --locked --group quality mypy --strict src/agentshield/policy.py
+      - name: Prove static safety and type gates actually reject invalid code
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          printf 'unresolved_symbol()\n' > "$tmp/unsafe.py"
+          if uv run --locked --group quality ruff check "$tmp/unsafe.py" --select F821; then
+            echo "Ruff must reject an undefined symbol" >&2
+            exit 1
+          fi
+          printf 'value: int = "text"\n' > "$tmp/bad_type.py"
+          if uv run --locked --group quality mypy --strict "$tmp/bad_type.py"; then
+            echo "Mypy must reject an incompatible annotation" >&2
+            exit 1
+          fi
