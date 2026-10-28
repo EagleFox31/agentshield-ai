@@ -10,7 +10,7 @@
 
 ## License policy and limitations
 
-The CI rejects recognized versions of **GPLv3/AGPLv3** in the third-party runtime with the `pip-licenses --fail-on` gate, and independently asserts that deliberately marking FastAPI's actual license forbidden causes the tool to exit nonzero. This is a **minimum prohibited-license safeguard**, **not a complete legal determination**. Other license families, dual licensing and missing metadata require explicit manual review of the `python-runtime-licenses` artifact before release.
+The CI reads **PEP 639 / SPDX license expressions** (`--from=expression`) and only allows the currently reviewed **MIT, BSD-3-Clause and PSF-2.0** third-party runtime dependency licenses. Unknown metadata, GPL/AGPL and all unapproved expressions **fail the gate**; there is no implicit permission for new licenses. A negative test intentionally marks FastAPI's known `MIT` license forbidden and verifies the scanner exits unsuccessfully. This is a *conservative license review gate*, **not a legal determination**. Compound SPDX expressions, dual licensing and missing metadata need explicit review before expanding the allowlist; consult the `python-runtime-licenses` artifact.
 
 The local `agentshield-ai` package is excluded from the *third-party dependency* report. The repository currently does **not** publish a root `LICENSE` file, so the owner must separately choose a project distribution license before describing the code as legally open-source. We do not invent or apply a license.
 
