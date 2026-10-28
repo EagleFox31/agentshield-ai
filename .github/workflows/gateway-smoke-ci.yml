@@ -98,9 +98,10 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
         with:
+          version: '0.10.0'
           python-version: '3.13'
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
-        run: uv run --group worker python scripts/make_local_identity_fixture.py
+        run: uv run --locked --group worker python scripts/make_local_identity_fixture.py
       - name: Apply portable audit schema to LOCAL D1 only
         run: |
           npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
@@ -113,7 +114,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
+          uv run --locked --group worker pywrangler dev > /tmp/agentshield-pywrangler.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           ready=0
