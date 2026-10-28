@@ -81,19 +81,8 @@ def _store(request: Request) -> D1ApprovalStore:
 
 
 def _policy(agent: VerifiedAgent) -> PolicyEngine:
-    # This fixture is NOT a dynamic authorization policy registry.
-    # The scope must also be signed and present in the JWT.
-    return PolicyEngine([
-        Rule(
-            id="local-supplier-mutation-review",
-            principal_id=agent.principal.id,
-            tool=DEMO_ACTION.tool,
-            operation=DEMO_ACTION.operation,
-            resource=DEMO_ACTION.resource,
-            required_scope="supplier:write",
-            effect=Effect.REQUIRE_APPROVAL,
-        ),
-    ])
+    """One shared fixture policy for agent decisions and human approvals."""
+    return demo_rules(agent.principal)
 
 
 def _now() -> int:
