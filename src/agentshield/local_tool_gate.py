@@ -15,10 +15,10 @@ from agentshield.approvals import (
 from agentshield.audit import AuditRepository
 from agentshield.audit_service import decide_and_audit
 from agentshield.demo_invoice import (
-    INVOICE, SUPPLIER_CHANGE, POLICY_VERSION, RecordingMockTools,
-    _rules,
+    INVOICE, SUPPLIER_CHANGE, RecordingMockTools,
 )
 from agentshield.identity import VerifiedAgent
+from agentshield.policy_registry import D1PolicyRegistry, SQLitePolicyRegistry
 from agentshield.policy import Effect, ToolAction
 
 _MAX_NONCE_LIFETIME_MS = 120_000
@@ -53,6 +53,7 @@ class LocalDryRunAdapter:
 async def execute_local_mock(
     repository: AuditRepository,
     approvals: ApprovalStore,
+    policy_registry: D1PolicyRegistry | SQLitePolicyRegistry,
     agent: VerifiedAgent,
     action: ToolAction,
     *,
@@ -74,11 +75,11 @@ async def execute_local_mock(
     if agent.principal.id != f"{agent.tenant_id}:{agent.agent_id}":
         raise MockGateRejected("Signed identity mismatch")
 
+    active = await policy_registry.load_active(agent.tenant_id)
     decision_id = "mock-decision-" + secrets.token_hex(16)
-    engine = _rules(agent.principal)
     decision = await decide_and_audit(
-        engine, repository, agent.principal, agent.tenant_id, action,
-        event_id=decision_id, policy_version=POLICY_VERSION,
+        active.engine, repository, agent.principal, agent.tenant_id, action,
+        event_id=decision_id, policy_version=active.version,
         occurred_at_ms=now_ms, retention_days=30,
     )
     if decision.effect == Effect.DENY:
@@ -101,17 +102,26 @@ async def execute_local_mock(
         try:
             consumed = await consume_mock(
                 approvals, agent, approval_id, action,
-                {"fixture": fixture}, engine, now_ms,
+                {"fixture": fixture}, active.engine, now_ms,
+                policy_version=active.version,
             )
         except ApprovalRejected as exc:
             raise MockGateRejected("Invalid human approval") from exc
         if not consumed:
             raise MockGateRejected("Approval missing, expired, or already consumed")
 
+    # Defense in depth: a policy reactivation/revocation between reading the
+    # snapshot and consuming an approval cannot dispatch the old mock.
+    # The durable consume step also rechecks the active version atomically.
+    latest = await policy_registry.load_active(agent.tenant_id)
+    if latest.version != active.version or latest.sha256 != active.sha256:
+        raise MockGateRejected("Policy changed during request")
     # This is the only call site for the stub. No real action can be run.
     result = adapter.invoke(action)
     return {
         "decision_id": decision_id,
+        "policy_version": active.version,
+        "policy_sha256": active.sha256,
         "effect": decision.effect.value,
         "mock_result": result,
         "mock_invoked": True,
