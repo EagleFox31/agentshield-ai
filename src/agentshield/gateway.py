@@ -18,6 +18,7 @@ from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
+from agentshield.policy_registry import D1PolicyRegistry, PolicyUnavailable
 from agentshield.approvals import D1ApprovalStore
 from agentshield.local_tool_gate import execute_local_mock, LocalDryRunAdapter, MockGateRejected
 import secrets
@@ -195,6 +196,46 @@ async def local_test_execution(body: LocalTestExecution, request: Request) -> di
         raise HTTPException(status_code=503, detail="Security storage unavailable") from exc
     except MockGateRejected as exc:
         raise HTTPException(status_code=409, detail="Local mock execution denied") from exc
+
+
+@app.post("/_local/registry-decisions")
+async def local_registry_decision(action: LocalAction, request: Request) -> dict[str, object]:
+    """Use only the active immutable D1 policy for the JWT-authenticated tenant.
+
+    No caller-controlled policy version, grants, arguments or tool execution.
+    Missing/corrupt policy or failed audit yields HTTP 503 (fail closed).
+    """
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        db = getattr(env, "DB", None)
+        active = await D1PolicyRegistry(db).load_active(agent.tenant_id)
+        proposed = ToolAction(action.tool, action.operation, action.resource)
+        audit = D1AuditRepository(db)
+        event_id = "registry-decision-" + secrets.token_hex(16)
+        decision = await decide_and_audit(
+            active.engine, audit, agent.principal, agent.tenant_id,
+            proposed, event_id=event_id,
+            policy_version=active.version,
+            occurred_at_ms=int(time.time() * 1000), retention_days=30,
+        )
+    except (PolicyUnavailable, AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Policy or audit unavailable") from exc
+    return {
+        "effect": decision.effect.value,
+        "reason_codes": list(decision.reasons),
+        "matched_rule_ids": list(decision.matched_rule_ids),
+        "event_id": event_id,
+        "policy_version": active.version,
+        "policy_sha256": active.sha256,
+        "action_digest": action_digest(proposed.tool, proposed.operation, proposed.resource),
+        "authenticated": True,
+        "audit_recorded": True,
+        "execution_authorized": False,
+        "executed": False,
+        "enforcement_ready": False,
+        "local_only": True,
+    }
 
 
 @app.post("/_local/decisions")
