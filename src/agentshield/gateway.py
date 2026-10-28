@@ -19,6 +19,9 @@ from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
 from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict, DecisionRateLimited
+from agentshield.local_command_outbox import (
+    queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
+)
 from agentshield.policy_registry import D1PolicyRegistry, PolicyUnavailable
 from agentshield.approvals import D1ApprovalStore
 from agentshield.local_tool_gate import execute_local_mock, LocalDryRunAdapter, MockGateRejected
@@ -205,6 +208,89 @@ async def local_test_execution(body: LocalTestExecution, request: Request) -> di
         raise HTTPException(status_code=503, detail="Security storage unavailable") from exc
     except MockGateRejected as exc:
         raise HTTPException(status_code=409, detail="Local mock execution denied") from exc
+
+
+class LocalCommandQueueRequest(BaseModel):
+    """Only an opaque signed-agent request ID; action fixed in the service."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(
+        min_length=16, max_length=96,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$",
+    )
+
+
+@app.post("/_local/commands/queue")
+async def local_queue_command(
+    body: LocalCommandQueueRequest, request: Request,
+) -> dict[str, object]:
+    """Queue a single audited fake invoice-read; never execute an adapter."""
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        db = getattr(env, "DB", None)
+        receipt = await queue_local_invoice(
+            D1ApprovalStore(db), D1AuditRepository(db), D1PolicyRegistry(db),
+            agent, request_id=body.request_id, now_ms=int(time.time() * 1000),
+        )
+    except CommandConflict as exc:
+        raise HTTPException(status_code=409, detail="Command conflict") from exc
+    except DecisionReplayConflict as exc:
+        raise HTTPException(status_code=409, detail="Decision request conflict") from exc
+    except DecisionRateLimited as exc:
+        raise HTTPException(
+            status_code=429, detail="Tenant decision rate limit exceeded",
+            headers={"Retry-After": "60"},
+        ) from exc
+    except (AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Command evidence unavailable") from exc
+    return {
+        "command_id": receipt.command_id, "request_id": receipt.request_id,
+        "decision_event_id": receipt.decision_event_id,
+        "queue_audit_event_id": receipt.queue_audit_event_id,
+        "policy_version": receipt.policy_version,
+        "state": receipt.state, "replayed": receipt.replayed,
+        "audit_recorded": True, "real_tool_called": False,
+        "executed": False, "enforcement_ready": False, "local_only": True,
+    }
+
+
+@app.post("/_local/commands/{command_id}/claim")
+async def local_claim_command(command_id: str, request: Request) -> dict[str, object]:
+    """One-use signed operator claim; no actual dispatcher is connected."""
+    env = _require_local_smoke(request)
+    operator = await _verified_local_identity(
+        request, "OPERATOR", "commands:claim",
+    )
+    try:
+        db = getattr(env, "DB", None)
+        return await claim_local_command(
+            D1ApprovalStore(db), D1AuditRepository(db), D1PolicyRegistry(db),
+            operator, command_id=command_id, now_ms=int(time.time() * 1000),
+        )
+    except CommandConflict as exc:
+        raise HTTPException(status_code=409, detail="Command unavailable") from exc
+    except (AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Command claim unavailable") from exc
+
+
+@app.post("/_local/commands/{command_id}/mark-uncertain")
+async def local_uncertain_command(command_id: str, request: Request) -> dict[str, object]:
+    """Simulated interrupted claim. Never requeue or dispatch a tool."""
+    env = _require_local_smoke(request)
+    operator = await _verified_local_identity(
+        request, "OPERATOR", "commands:reconcile",
+    )
+    try:
+        db = getattr(env, "DB", None)
+        return await mark_local_uncertain(
+            D1ApprovalStore(db), D1AuditRepository(db), operator,
+            command_id=command_id, now_ms=int(time.time() * 1000),
+        )
+    except CommandConflict as exc:
+        raise HTTPException(status_code=409, detail="Command unavailable") from exc
+    except (AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Command recovery unavailable") from exc
 
 
 @app.post("/_local/idempotent-decisions")
