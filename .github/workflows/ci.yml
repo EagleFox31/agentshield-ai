@@ -87,6 +87,61 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  dependency-licenses:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # checkout v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Build clean production dependency environment
+        run: |
+          set -euo pipefail
+          python -m venv .runtime-license-env
+          .runtime-license-env/bin/python -m pip install --disable-pip-version-check -e .
+          .runtime-license-env/bin/python -m pip check
+      - name: Install established license auditor separately
+        run: |
+          python -m venv .license-scanner-env
+          .license-scanner-env/bin/python -m pip install --disable-pip-version-check 'pip-licenses==5.5.5'
+      - name: Generate third-party runtime license manifest and block known incompatible licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          scanner=.license-scanner-env/bin/pip-licenses
+          interpreter="$PWD/.runtime-license-env/bin/python"
+          "$scanner" --python "$interpreter" --from=all --format=json --with-urls \
+            --ignore-packages agentshield-ai \
+            --output-file dependency-licenses.json
+          "$scanner" --python "$interpreter" --from=all \
+            --ignore-packages agentshield-ai \
+            --fail-on='GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later;GNU General Public License v3 (GPLv3);GNU Affero General Public License v3'
+          # Prove the scanner fails on a known installed permissive library
+          # when intentionally marked prohibited. Synthetic policy test only.
+          if "$scanner" --python "$interpreter" --from=all --packages fastapi --fail-on='MIT;MIT License'; then
+            echo "License gate failed to reject a deliberately forbidden installed license" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          rows = json.loads(Path('dependency-licenses.json').read_text())
+          assert len(rows) >= 5, 'License inventory unexpectedly empty'
+          assert any(r['Name'].casefold() == 'fastapi' for r in rows), 'Required FastAPI missing'
+          print(f"Inventory: {len(rows)} third-party runtime packages")
+          PY
+      - name: Preserve dependency license manifest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-runtime-licenses
+          path: dependency-licenses.json
+          if-no-files-found: warn
+          retention-days: 14
+
   static-safety:
     runs-on: ubuntu-latest
     timeout-minutes: 5
