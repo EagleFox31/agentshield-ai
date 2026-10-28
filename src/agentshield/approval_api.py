@@ -27,7 +27,8 @@ from agentshield.detection import UntrustedSegment, ToolObservation, assess_thre
 from agentshield.ai_budget import D1AIBudget
 from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISettings
 
-from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
+from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE
+from agentshield.policy_registry import D1PolicyRegistry, PublishedPolicy
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
 from agentshield.webcrypto_jwt_candidate import verify_agent_jwt_webcrypto, require_bearer_webcrypto
@@ -80,9 +81,10 @@ def _store(request: Request) -> D1ApprovalStore:
         raise HTTPException(status_code=503, detail="Approval storage unavailable") from exc
 
 
-def _policy(agent: VerifiedAgent) -> PolicyEngine:
-    """One shared fixture policy for agent decisions and human approvals."""
-    return demo_rules(agent.principal)
+async def _active_policy(request: Request, tenant_id: str) -> PublishedPolicy:
+    """Load and verify the signed tenant's active snapshot (no caller version)."""
+    store = D1PolicyRegistry(getattr(_local_env(request), "DB", None))
+    return await store.load_active(tenant_id)
 
 
 def _now() -> int:
@@ -108,9 +110,10 @@ async def demo_create(body: DemoAction, request: Request):
     store = _store(request)
     now = _now()
     try:
+        active = await _active_policy(request, agent.tenant_id)
         row = await create_pending(
             store, agent, DEMO_ACTION, {"fixture": body.fixture},
-            _policy(agent), now,
+            active.engine, now, policy_version=active.version,
         )
     except ApprovalRejected as exc:
         raise HTTPException(status_code=403, detail="Not eligible for review") from exc
@@ -145,10 +148,12 @@ async def operator_review(approval_id: str, decision: Literal["approve", "reject
         if row is not None and row.state == "pending" and row.expires_at_ms <= now:
             await expire_if_needed(store, operator.tenant_id, approval_id, now)
             raise HTTPException(status_code=409, detail="Approval expired")
+        active = await _active_policy(request, operator.tenant_id)
         changed = await review(
             store, approval_id, operator.tenant_id,
             operator.principal.id,
             "approved" if decision == "approve" else "rejected", now,
+            current_policy_version=active.version,
         )
     except ApprovalRejected as exc:
         raise HTTPException(status_code=403, detail="Self-approval denied") from exc
@@ -186,9 +191,11 @@ async def demo_consume(approval_id: str, body: DemoAction, request: Request):
     try:
         now = _now()
         await expire_if_needed(store, agent.tenant_id, approval_id, now)
+        active = await _active_policy(request, agent.tenant_id)
         success = await consume_mock(
             store, agent, approval_id, DEMO_ACTION,
-            {"fixture": body.fixture}, _policy(agent), now,
+            {"fixture": body.fixture}, active.engine, now,
+            policy_version=active.version,
         )
     except AuditStorageError as exc:
         raise HTTPException(status_code=503, detail="Consumption audit failed") from exc
