@@ -865,14 +865,23 @@ jobs:
               http://127.0.0.1:8787/_local/egress-inspection)
             test "$status" = 409
           done
-          for fixture in bad_signature operator_valid approval_agent; do
+          for fixture in bad_signature operator_valid; do
             status=$(curl --silent -o /dev/null -w '%{http_code}' \
               -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
               -H 'Content-Type: application/json' \
               -d '{"scenario":"public"}' \
               http://127.0.0.1:8787/_local/egress-inspection)
-            if [ "$fixture" = approval_agent ]; then test "$status" = 409; else test "$status" = 401; fi
+            test "$status" = 401
           done
+          # A second correctly signed agent with invoice:read is ALSO
+          # entitled to the non-executing inspection; its wider supplier
+          # scope does not itself prohibit invoice reads.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"scenario":"public"}' \
+            http://127.0.0.1:8787/_local/egress-inspection > /tmp/egress-second-agent.json
+          python -c 'import json;d=json.load(open("/tmp/egress-second-agent.json"));assert not d["network_enabled"] and not d["execution_authorized"]'
           for invalid in '{"scenario":"public","url":"http://169.254.169.254"}' \
                          '{"scenario":"public","resolved_addresses":["8.8.8.8"]}' \
                          '{"scenario":"public","allow_redirects":true}'; do
