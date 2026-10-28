@@ -18,7 +18,7 @@ from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
-from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict
+from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict, DecisionRateLimited
 from agentshield.policy_registry import D1PolicyRegistry, PolicyUnavailable
 from agentshield.approvals import D1ApprovalStore
 from agentshield.local_tool_gate import execute_local_mock, LocalDryRunAdapter, MockGateRejected
@@ -224,6 +224,12 @@ async def local_idempotent_decision(
         )
     except DecisionReplayConflict as exc:
         raise HTTPException(status_code=409, detail="Decision request conflict") from exc
+    except DecisionRateLimited as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Tenant decision rate limit exceeded",
+            headers={"Retry-After": "60"},
+        ) from exc
     except (AuditStorageError, ValueError) as exc:
         raise HTTPException(status_code=503, detail="Decision evidence unavailable") from exc
     return {

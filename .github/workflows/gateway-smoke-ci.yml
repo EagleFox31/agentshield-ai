@@ -137,6 +137,7 @@ jobs:
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0004_policy_snapshots.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0005_policy_activation_audit.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0006_idempotent_decisions.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0007_tenant_decision_quota.sql
           # Publish an INACTIVE reviewed V2 with identical rules, so old
           # approvals must be invalidated solely by the version transition.
           uv run --locked --group worker python scripts/seed_local_policy_registry.py --include-v2 --output /tmp/agentshield-ci-policy.sql
@@ -752,6 +753,45 @@ jobs:
             http://127.0.0.1:8787/v1/idempotent-decisions)
           test "$status" = 404
           echo 'Local Pyodide/D1 idempotent receipts: exact retry, one audit, scope/action collision refusal verified.'
+          # The previous decision may have been in another fixed minute.
+          # Start just after a fresh minute boundary for a deterministic
+          # 16 NEW requests + 17th denied test, without test-only clocks.
+          # JWT fixtures last 240 seconds; no remote or public call is made.
+          sleep $((61 - $(date -u +%s) % 60))
+          # Repeated key must still return the initial immutable receipt
+          # without allocating any new slot.
+          for i in $(seq 1 16); do
+            key=$(printf 'ci-quota-decision-%06d' "$i")
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' \
+              -d "{\"tool\":\"invoices\",\"operation\":\"read\",\"resource\":\"invoice/42\",\"request_id\":\"$key\"}" \
+              http://127.0.0.1:8787/_local/idempotent-decisions > /tmp/quota-new.json
+          done
+          status=$(curl --silent -o /tmp/quota-overflow.json -w '%{http_code}' \
+            -D /tmp/quota-overflow.headers \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"ci-quota-decision-overflow"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions)
+          test "$status" = 429
+          grep -qi '^retry-after: 60' /tmp/quota-overflow.headers
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-retry-00001"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions > /tmp/quota-exempt-replay.json
+          python - <<'PY_QUOTA'
+          import json
+          from pathlib import Path
+          first=json.loads(Path("/tmp/idempotent-first.json").read_text())
+          retry=json.loads(Path("/tmp/quota-exempt-replay.json").read_text())
+          assert first["event_id"] == retry["event_id"]
+          assert retry["replayed"] is True and retry["audit_recorded"]
+          assert retry["execution_authorized"] is False
+          PY_QUOTA
+          echo 'Local Pyodide/D1 tenant quota cap, 429, Retry-After and zero-cost exact replay verified.'
+
 
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
