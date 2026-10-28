@@ -27,7 +27,7 @@ where = ["src"]
 [dependency-groups]
 # For generating synthetic signing fixtures on *host CPython* before pywrangler
 # boots. pywrangler reads [project.dependencies] for the Pyodide Worker image.
-worker = ["workers-py==1.17.7", "workers-runtime-sdk==1.9.1",
+worker = ["workers-py==1.17.7", "workers-runtime-sdk==1.9.5",
           "PyJWT==2.15.1", "cryptography==50.0.2"]
 # Host-only independent PyJWT security oracle for parity tests.
 # Host-only HTTP + cryptographic parity tests (not bundled into Pyodide).
