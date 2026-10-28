@@ -30,5 +30,8 @@ where = ["src"]
 worker = ["workers-py==1.17.7", "workers-runtime-sdk==1.9.1",
           "PyJWT==2.15.1", "cryptography==50.0.2"]
 # Host-only independent PyJWT security oracle for parity tests.
-# Host-only HTTP + cryptographic parity tests (not bundled into Pyodide).\ntest = ["PyJWT==2.15.1", "cryptography==50.0.2", "httpx==0.28.1"]\n# Reproducible quality tools; not bundled into Pyodide.\nquality = ["ruff==0.17.2", "mypy==1.18.2"]
+# Host-only HTTP + cryptographic parity tests (not bundled into Pyodide).
+test = ["PyJWT==2.15.1", "cryptography==50.0.2", "httpx==0.28.1"]
+# Reproducible quality tools; not bundled into Pyodide.
+quality = ["ruff==0.17.2", "mypy==1.18.2"]
 
