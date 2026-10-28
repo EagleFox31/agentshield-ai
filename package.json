@@ -1,0 +1,10 @@
+{
+  "name": "agentshield-ci-toolchain",
+  "version": "0.0.0-private",
+  "private": true,
+  "description": "Local-only pinned Wrangler toolchain; no JavaScript application or deployment.",
+  "engines": {"node": ">=22"},
+  "devDependencies": {
+    "wrangler": "4.154.0"
+  }
+}
