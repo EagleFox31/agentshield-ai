@@ -1,6 +1,6 @@
 -- Local-only one-shot synthetic dispatch reservation, NOT external execution.
 -- Original outbox state machine remains queued -> claimed -> uncertain.
-CREATE TABLE IF NOT EXISTS local_mock_dispatch_reservations (
+CREATE UNIQUE INDEX IF NOT EXISTS idx_local_outbox_tenant_command\n ON local_command_outbox(tenant_id,command_id);\nCREATE TABLE IF NOT EXISTS local_mock_dispatch_reservations (
   tenant_id TEXT NOT NULL,
   command_id TEXT NOT NULL,
   dispatch_id TEXT NOT NULL UNIQUE,
