@@ -99,7 +99,7 @@ def main() -> None:
     operator_audience = "urn:agentshield:operators"
     operator_claims = {
         **claims, "iss": operator_issuer, "aud": operator_audience,
-        "sub": "reviewer-01", "scope": "approvals:read approvals:decide",
+        "sub": "reviewer-01", "scope": "approvals:read approvals:decide policies:activate",
         "jti": "operator-ci-token-123",
     }
     tokens["approval_agent"] = jwt.encode(
