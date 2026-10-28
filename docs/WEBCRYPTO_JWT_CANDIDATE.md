@@ -1,32 +1,34 @@
-# Candidate JWT ES256 via Workers Web Crypto — full claim parity
+# Native Web Crypto ES256 — experimental gateway migration
 
-**Date:** 2026-10-27 · **Security status:** isolated local-only candidate, **NOT** the active identity verifier.
+**State:** PR #29 implementation candidate. Migration is tested locally with Cloudflare Python Workers/Pyodide and D1; there is **no public enforcement endpoint, deployment, or production approval**. This supersedes the earlier *signature-only* and *full-claims diagnostic* milestones, without erasing their audit trail.
 
-## Purpose / RAIDER architecture
+## RAIDER design
 
-Instead of writing another cryptographic implementation, reuse the *proven* `crypto.subtle.verify(ECDSA P-256, SHA-256)` Python/JavaScript FFI from merged [PR #27](https://github.com/EagleFox31/agentshield-ai/pull/27). The accepted signature bytes are exactly the compact JWS protected header and payload, and the key comes only from the already pinned local trusted JWKS. No remote discovery, imported private keys, downgrade algorithms or custom elliptic-curve arithmetic.
+- **Reuse:** `src/agentshield/webcrypto_es256_spike.py` delegates P-256/SHA-256 to native `crypto.subtle` rather than implementing cryptography. `src/agentshield/webcrypto_jwt_candidate.py` calls the existing shared `identity.validated_claims_to_agent` logic and an allowlisted local JWKS.
+- **Agnostic:** the `VerifiedAgent` and `PolicyEngine` contracts are independent of the crypto provider. The gateway and operator APIs now share an async native-Worker verifier; a caller cannot supply signing algorithms, effective scopes or remote verification keys.
+- **Idempotent and durable:** no stateful auth side effects; approval and D1 nonce/audit workflows are still tested for exact-once and replay safety. Keep the GitHub evidence and explicit local-only non-deploy boundary.
+- **Engineering-grade:** the token's ES256 signature must be valid **before** reading trusted claims; exact issuer and single-string audience, bounded exp/nbf/iat, tenant, subject, jti and scoped privileges must pass. Missing Worker JS FFI fails closed — there is no silent PyJWT fallback.
+- **Retroactive:** the previous `cryptography==47.0.0` vulnerability remains recorded in issue #2. The vulnerable dependency is **removed from the Worker runtime set**; the host-only test/fixture group uses patched `cryptography==50.0.2` and the incumbent PyJWT as an independent comparison oracle.
 
-The former `identity.verify_agent_jwt` still performs signature validation through PyJWT. Its established post-verification claim-to-principal logic has been extracted into **one shared function**, `identity.validated_claims_to_agent`, and reused by the candidate to avoid diverging authorization semantics.
+## Runtime and test dependency boundary
 
-The candidate verifies these contracts **after** native signature verification: exact trusted `iss`, exactly one string `aud`, required claims `sub,exp,nbf,iat,jti,tenant_id,scope`, integer and bounded time claims (maximum 5-minute lifetime), valid principal/tenant format, unique bounded scopes, limited JOSE header, canonical base64url, unique JSON claim keys and no non-standard NaN constants. ES256 signatures with wrong audience **must be rejected**, unlike the signature-only probe.
+The Pyodide Worker resolves only the top-level runtime `[project.dependencies]`: patched FastAPI and Starlette. There is no `PyJWT` or `cryptography` package in this required set. `[dependency-groups].worker` supplies Pywrangler plus patched host-only libraries to *generate synthetic JWTs*, and `[dependency-groups].test` supplies the independent CPython oracle. `identity.verify_agent_jwt` imports PyJWT lazily and must **never** be called from a Worker authentication route.
 
-The candidate is importable as `verify_agent_jwt_webcrypto` and `require_bearer_webcrypto`; **nothing calls it in production**. Its isolated `/_local/demo/webcrypto-jwt-candidate` endpoint first authenticates a human operator using the incumbent verifier, then compares a synthetic submitted test token. It returns only a boolean and bounded metadata, never accepts the submitted token for tool execution or privilege assignment.
+The following receive only native-verified identities: `GET /v1/identity` (read-only proof) and locally guarded operator/agent approval, demonstration and redacted-audit routes. There remains **no public `/v1/decisions` and no production tool dispatch**.
 
-## Tests
+## Verifiable CI gates
 
-- `tests/gateway/test_webcrypto_jwt_candidate.py` compares the shared principal contract and negative claims against the incumbent PyJWT verifier with the signature port **mocked**; this proves claim logic, **not** cryptographic validity.
-- The original `tests/gateway/test_identity.py` still runs against the actual incumbent signature implementation.
-- The existing local `gateway-smoke-ci.yml` runs a **real Pywrangler/Pyodide/Cloudflare native Web Crypto + D1** probe against synthetic signed fixtures for valid/invalid signature, wrong issuer/audience, expiry, future dates, missing JTI, malformed tenant/scopes, and untrusted operator key. A valid JWT must produce a tenant-bound principal without executing a tool. Missing operator credentials must produce HTTP 401.
-- All production-shaped endpoints and approval flows still use original PyJWT until an explicitly reviewed transition.
+- **Python tests:** `AgentShield Python CI` with deterministic policy regression, Ruff safety checks, package clean installation, unwaived `pip-audit` and CycloneDX runtime SBOM artifact.
+- **Host HTTP security tests:** `gateway-unit` installs only patched host-only PyJWT and cryptography for generating/signing tokens, with a strictly test-scoped oracle injected for one positive CPython HTTP-contract check. Another test asserts the native path fails closed with no JS FFI.
+- **Actual local Cloudflare/Pyodide/D1:** `python-worker-d1-local` proves real native verification for both agent and independent operator JWKS, expiration, forged signature, audience mismatch, untrusted `kid`, safe key rotation, approval replay and denied supplier action; no real external provider is used.
 
-## Remaining migration gates (issue #2)
+**Evidence before final documentation edits:** [Python CI 40605715888](https://github.com/EagleFox31/agentshield-ai/actions/runs/40605715888), [Worker/D1 CI 40605715875](https://github.com/EagleFox31/agentshield-ai/actions/runs/40605715875). Rerun all checks on the final head before merge.
 
-1. Review cross-verifier semantics with a larger property/adversarial corpus, including duplicate JSON keys, key rotation and imported point validity.
-2. Move `PyJWT` and a **patched** CPython `cryptography` to test-only tool dependencies. Refactor existing production gateways and approval flows to async native WebCrypto; never provide silent CPython or insecure crypto fallback in production.
-3. Test exact agent/operator trust separation, rate/limit, D1 and approval invariants **under the replacement** (not only the probe).
-4. Validate complete CPython+Pyodide transitive dependency locks and an **unwaived** `pip-audit` with SBOM; the old pinned `cryptography==47.0.0` remains vulnerable until removed from the runtime.
-5. Merge only on green CI, keep all real execution disabled and continue P0 review of issue #2 before closure.
+## Remaining P0 acceptance work
 
-Sources: [Cloudflare Python FFI](https://developers.cloudflare.com/workers/languages/python/ffi/) and [Cloudflare Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/).
+- Review broader adversarial/differential JWT corpus and normalize more subtle token encoding issues across languages.
+- Establish reproducible **transitive** dependency locks for the CPython and Pyodide runtimes and an independent full dependency inventory; the current SBOM is scoped to the audited runtime.
+- Verify remaining formatting/type/dependency-update policies and independent reviewer acceptance.
+- Keep #2 open until the declared foundation acceptance criteria are fully met.
 
-**No deployment, model/provider activation, cloud D1, real credentials or costs.**
+No live model inference, no real D1 cloud access, no real credentials, no external effects, no deployment.
