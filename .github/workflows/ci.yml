@@ -116,12 +116,14 @@ jobs:
           "$scanner" --python "$interpreter" --from=all --format=json --with-urls \
             --ignore-packages agentshield-ai \
             --output-file dependency-licenses.json
-          "$scanner" --python "$interpreter" --from=all \
+          # PEP 639 SPDX expressions are authoritative; reject UNKNOWN,
+          # copyleft and every not-yet-reviewed license, not just listed GPL.
+          "$scanner" --python "$interpreter" --from=expression \
             --ignore-packages agentshield-ai \
-            --fail-on='GPL-3.0-only;GPL-3.0-or-later;AGPL-3.0-only;AGPL-3.0-or-later;GNU General Public License v3 (GPLv3);GNU Affero General Public License v3'
+            --allow-only='MIT;BSD-3-Clause;PSF-2.0'
           # Prove the scanner fails on a known installed permissive library
           # when intentionally marked prohibited. Synthetic policy test only.
-          if "$scanner" --python "$interpreter" --from=all --packages fastapi --fail-on='MIT;MIT License'; then
+          if "$scanner" --python "$interpreter" --from=expression --packages fastapi --fail-on='MIT'; then
             echo "License gate failed to reject a deliberately forbidden installed license" >&2
             exit 1
           fi
