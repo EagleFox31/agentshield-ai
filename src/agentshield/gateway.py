@@ -23,6 +23,10 @@ from agentshield.mock_dispatch_boundary import dispatch_claimed_invoice_mock, Mo
 from agentshield.egress_policy import (
     EgressRejected, _LOCAL_INVOICE_CAPABILITY, inspect_egress,
 )
+from agentshield.bound_transport_contract import (
+    SyntheticTransportObservation, inspect_synthetic_transport,
+)
+from dataclasses import replace
 from agentshield.demo_invoice import INVOICE
 from agentshield.local_command_outbox import (
     queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
@@ -277,6 +281,80 @@ async def local_egress_inspection(
         "address_count": inspection.address_count,
         "network_enabled": False,
         "transport_pinned": False,
+        "execution_authorized": False,
+        "real_tool_called": False,
+        "enforcement_ready": False,
+        "local_only": True,
+    }
+
+
+class LocalBoundTransportFixture(BaseModel):
+    """Only code-owned synthetic connection events; never customer endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+    scenario: Literal[
+        "matched", "peer-swap", "metadata-peer", "tls-sni", "bad-cert",
+        "redirect", "proxy", "oversized", "timeout", "method-override",
+    ]
+
+
+@app.post("/_local/transport-binding-inspection")
+async def local_transport_binding_inspection(
+    body: LocalBoundTransportFixture, request: Request,
+) -> dict[str, object]:
+    """Inspect fake peer+TLS evidence. NO DNS, HTTP, sockets or live provider."""
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        active = await D1PolicyRegistry(getattr(env, "DB", None)).load_active(
+            agent.tenant_id
+        )
+        original = SyntheticTransportObservation(
+            selected_ip="8.8.8.8", connected_peer_ip="8.8.8.8",
+            target_host=_LOCAL_INVOICE_CAPABILITY.host,
+            tls_sni=_LOCAL_INVOICE_CAPABILITY.host,
+            certificate_host=_LOCAL_INVOICE_CAPABILITY.host,
+            certificate_chain_verified=True,
+            certificate_hostname_verified=True,
+            tls_version="TLSv1.3",
+            method="GET", observed_url=_LOCAL_INVOICE_CAPABILITY.url,
+            proxy_used=False, redirects_followed=0, http_status=200,
+            response_body_bytes=128, elapsed_ms=100,
+        )
+        tampering = {
+            "matched": {},
+            "peer-swap": {"connected_peer_ip": "1.1.1.1"},
+            "metadata-peer": {"connected_peer_ip": "169.254.169.254"},
+            "tls-sni": {"tls_sni": "api.attacker.example"},
+            "bad-cert": {"certificate_chain_verified": False},
+            "redirect": {"redirects_followed": 1, "http_status": 302},
+            "proxy": {"proxy_used": True},
+            "oversized": {"response_body_bytes": 16_385},
+            "timeout": {"elapsed_ms": 2_001},
+            "method-override": {"method": "POST"},
+        }
+        inspected = inspect_synthetic_transport(
+            agent.principal, INVOICE, active.engine,
+            candidate_url=_LOCAL_INVOICE_CAPABILITY.url,
+            dns_answers=("8.8.8.8", "1.1.1.1"),
+            observation=replace(original, **tampering[body.scenario]),
+        )
+    except EgressRejected as exc:
+        raise HTTPException(
+            status_code=409, detail="Synthetic transport contract rejected"
+        ) from exc
+    except AuditStorageError as exc:
+        raise HTTPException(
+            status_code=503, detail="Policy evidence unavailable"
+        ) from exc
+    return {
+        "inspection": "synthetic_transport_contract_only",
+        "capability_id": inspected.capability_id,
+        "body_limit_bytes": inspected.body_limit_bytes,
+        "elapsed_limit_ms": inspected.elapsed_limit_ms,
+        "simulation_only": True,
+        "network_enabled": False,
+        "transport_attested": False,
         "execution_authorized": False,
         "real_tool_called": False,
         "enforcement_ready": False,
