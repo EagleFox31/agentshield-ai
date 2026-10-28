@@ -5,13 +5,13 @@
 ## Supported baseline
 
 - Python **3.13** for the developer and CI verification shown here; `pyproject.toml` supports older CPython, but the CI reproducibility claim specifically covers Python 3.13.
-- `uv==0.10.0` with the version-controlled root [`uv.lock`](../uv.lock).
+- `uv==0.12.3` with the version-controlled root [`uv.lock`](../uv.lock).
 - Cloudflare `wrangler.jsonc` compatibility date **2026-10-26**, the `python_workers` flag and a **LOCAL-only** D1 binding with the all-zero placeholder ID. The platform's Pyodide and package repository are chosen by Cloudflare based on the compatibility date; `uv.lock` controls host resolution, **not every separate Pyodide wheel**.
 - Native Web Crypto ES256 verifies incoming JWTs in the Python Worker. `PyJWT` and patched `cryptography` are used only by host tests and local synthetic JWT fixture generation.
 
 ## Clean checkout on a contributor machine
 
-Use a fresh clone (do not carry over `.venv`, `.dev.vars`, `.local-jwt` or Cloudflare local state). Install `uv 0.10.0` from its official distribution and Python 3.13, then run:
+Use a fresh clone (do not carry over `.venv`, `.dev.vars`, `.local-jwt` or Cloudflare local state). Install `uv 0.12.3` from its official distribution and Python 3.13, then run:
 
 ```bash
 uv python install 3.13
