@@ -67,9 +67,6 @@ async def execute_local_mock(
     The nonce limits repeated local fixture runs. It is not a production-grade
     idempotent result registry and does not provide exactly-once real-world I/O.
     """
-    if action not in (INVOICE, SUPPLIER_CHANGE):
-        # Do not dispatch even if a future policy mistakenly allows it.
-        raise MockGateRejected("Action outside local adapter allowlist")
     if fixture not in ("scenario-A", "scenario-B"):
         raise MockGateRejected("Unknown local fixture")
     if not isinstance(now_ms, int) or now_ms <= 0:
@@ -86,6 +83,10 @@ async def execute_local_mock(
     )
     if decision.effect == Effect.DENY:
         raise MockGateRejected("Not permitted by policy")
+    if action not in (INVOICE, SUPPLIER_CHANGE):
+        # Unknown actions were auditable DENY requests. Even a future
+        # mistaken ALLOW rule cannot extend the hardcoded adapter allowlist.
+        raise MockGateRejected("Action outside local adapter allowlist")
     if decision.effect == Effect.REQUIRE_APPROVAL:
         if not approval_id:
             raise MockGateRejected("Human approval required")
