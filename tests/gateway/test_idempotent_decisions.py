@@ -10,7 +10,7 @@ from agentshield.approvals import SQLiteApprovalStore
 from agentshield.audit import AuditStorageError
 from agentshield.audit_sqlite import SQLiteAuditRepository
 from agentshield.identity import VerifiedAgent
-from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict
+from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict, DecisionRateLimited
 from agentshield.policy import Principal, ToolAction
 from agentshield.policy_registry import SQLitePolicyRegistry
 from scripts.seed_local_policy_registry import make_sql, reviewed_v2_sql
@@ -33,7 +33,8 @@ class IdempotentDecisionTests(unittest.TestCase):
         self.db.execute("PRAGMA foreign_keys=ON")
         for filename in ("0001_audit_core.sql", "0004_policy_snapshots.sql",
                          "0005_policy_activation_audit.sql",
-                         "0006_idempotent_decisions.sql"):
+                         "0006_idempotent_decisions.sql",
+                         "0007_tenant_decision_quota.sql"):
             self.db.executescript((ROOT / "migrations" / filename).read_text())
         self.db.executescript(make_sql() + reviewed_v2_sql())
         self.store = SQLiteApprovalStore(self.db)
@@ -177,6 +178,119 @@ class IdempotentDecisionTests(unittest.TestCase):
             with self.subTest(sql=sql), self.assertRaises(sqlite3.DatabaseError):
                 self.db.execute(sql)
         self.assertEqual(self.counts(), (1, 1))
+
+    def slot_count(self, tenant="ci_local"):
+        return self.db.execute(
+            "SELECT COUNT(*) FROM tenant_decision_rate_slots WHERE tenant_id=?",
+            (tenant,),
+        ).fetchone()[0]
+
+    def test_tenant_quota_exhaustion_is_atomic_and_returns_no_event(self):
+        first = None
+        for i in range(16):
+            outcome = self.decide(
+                key=f"decision-budget-{i:06d}", now=NOW + i,
+            )
+            if first is None:
+                first = outcome
+            self.assertEqual(outcome.effect, "allow")
+        self.assertEqual(self.counts(), (16, 16))
+        self.assertEqual(self.slot_count(), 16)
+        with self.assertRaises(DecisionRateLimited):
+            self.decide(key="decision-budget-overflow", now=NOW + 20)
+        self.assertEqual(self.counts(), (16, 16))
+        self.assertEqual(self.slot_count(), 16)
+        retry = self.decide(key="decision-budget-000000", now=NOW + 25)
+        self.assertEqual(retry.event_id, first.event_id)
+        self.assertTrue(retry.replayed)
+        self.assertEqual(self.slot_count(), 16)
+
+    def test_denied_policy_decision_still_costs_one_slot(self):
+        for i in range(16):
+            result = self.decide(
+                action=SUPPLIER,
+                key=f"decision-denied-{i:06d}",
+                now=NOW + i,
+            )
+            self.assertEqual(result.effect, "deny")
+        self.assertEqual(self.slot_count(), 16)
+        with self.assertRaises(DecisionRateLimited):
+            self.decide(key="decision-permit-after-deny", now=NOW + 17)
+        self.assertEqual(self.counts(), (16, 16))
+
+    def test_new_fixed_window_allows_new_keys_and_retry_never_refills_quota(self):
+        self.decide(key="decision-window-000001")
+        later = NOW + 60_001
+        same = self.decide(key="decision-window-000001", now=later)
+        self.assertTrue(same.replayed)
+        self.assertEqual(self.slot_count(), 1)
+        new = self.decide(key="decision-window-000002", now=later)
+        self.assertFalse(new.replayed)
+        self.assertEqual(self.slot_count(), 2)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(DISTINCT window_start_ms) "
+            "FROM tenant_decision_rate_slots WHERE tenant_id='ci_local'"
+        ).fetchone()[0], 2)
+
+    def test_rate_limit_shared_across_principals_within_tenant(self):
+        for i in range(16):
+            actor = self.identity(
+                subject="local-demo-agent" if i % 2 == 0 else "another-agent",
+            )
+            self.decide(key=f"decision-tenant-shared-{i:03d}", agent=actor)
+        self.assertEqual(self.slot_count(), 16)
+        with self.assertRaises(DecisionRateLimited):
+            self.decide(key="decision-tenant-shared-overflow")
+        self.assertEqual(self.counts(), (16, 16))
+
+    def test_separate_tenant_has_separate_quota(self):
+        from agentshield.policy_registry import canonical_snapshot
+        from agentshield.demo_invoice import demo_rule_records
+        other = self.identity(tenant="tenant_other")
+        rules, digest = canonical_snapshot(
+            other.tenant_id, "ci-local-policy-v1",
+            demo_rule_records(other.principal),
+        )
+        self.db.execute(
+            "INSERT INTO policy_versions "
+            "(tenant_id,version,sha256,created_at_ms,rules_json) "
+            "VALUES(?,?,?,?,?)",
+            (other.tenant_id, "ci-local-policy-v1", digest, NOW, rules),
+        )
+        self.db.execute(
+            "INSERT INTO active_policy_versions "
+            "(tenant_id,version,activated_at_ms) VALUES(?,?,?)",
+            (other.tenant_id, "ci-local-policy-v1", NOW),
+        )
+        for i in range(16):
+            self.decide(key=f"decision-own-tenant-{i:03d}")
+        result = self.decide(
+            key="decision-other-tenant-00001", agent=other,
+        )
+        self.assertEqual(result.effect, "allow")
+        self.assertEqual(self.slot_count(), 16)
+        self.assertEqual(self.slot_count(other.tenant_id), 1)
+
+    def test_audit_failure_does_not_spend_rate_slot(self):
+        self.db.execute(
+            "CREATE TRIGGER reject_rate_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.event_id LIKE 'decision-%' "
+            "BEGIN SELECT RAISE(ABORT,'synthetic audit outage'); END"
+        )
+        with self.assertRaises(AuditStorageError):
+            self.decide()
+        self.assertEqual(self.slot_count(), 0)
+        self.assertEqual(self.counts(), (0, 0))
+
+    def test_rate_slot_is_database_immutable(self):
+        self.decide()
+        for sql in (
+            "DELETE FROM tenant_decision_rate_slots",
+            "UPDATE tenant_decision_rate_slots SET window_start_ms=0",
+        ):
+            with self.subTest(sql=sql), self.assertRaises(sqlite3.DatabaseError):
+                self.db.execute(sql)
+        self.assertEqual(self.slot_count(), 1)
 
     def test_input_bounds(self):
         for key in ("tiny", "bad key with spaces", "a" * 97):
