@@ -15,7 +15,9 @@ from agentshield.identity import (
 from agentshield.approval_api import router as approval_router, _identity as _verified_local_identity
 from agentshield.webcrypto_jwt_candidate import require_bearer_webcrypto
 from agentshield.audit import AuditStorageError
-from agentshield.demo_invoice import run_invoice_attack
+from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
+from agentshield.audit_service import decide_and_audit
+import secrets
 import time
 from agentshield.audit import AuditEvent, action_digest
 from agentshield.audit_d1 import D1AuditRepository
@@ -149,6 +151,46 @@ async def local_platform_provenance(request: Request) -> dict[str, object]:
         "local_only": True,
         "enforcement_ready": False,
         "real_tool_called": False,
+    }
+
+
+@app.post("/_local/decisions")
+async def local_signed_decision(action: LocalAction, request: Request) -> dict[str, object]:
+    """Local decision + durable D1 evidence; NEVER an execution capability.
+
+    The caller signs identity and scopes via trusted ES256 JWT. Only exact
+    synthetic fixture rules exist. Tool arguments, policy and privileges
+    cannot be supplied by the request body. No actual tool adapter is wired.
+    """
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        repository = D1AuditRepository(getattr(env, "DB", None))
+        proposed = ToolAction(action.tool, action.operation, action.resource)
+        event_id = "local-decision-" + secrets.token_hex(16)
+        now_ms = int(time.time() * 1000)
+        decision = await decide_and_audit(
+            demo_rules(agent.principal), repository, agent.principal,
+            agent.tenant_id, proposed,
+            event_id=event_id, policy_version="demo-fixture-policy-v1",
+            occurred_at_ms=now_ms, retention_days=30,
+        )
+    except (AuditStorageError, ValueError) as exc:
+        # Never disclose internal DB state or emit ALLOW without stored evidence.
+        raise HTTPException(status_code=503, detail="Decision audit unavailable") from exc
+    return {
+        "effect": decision.effect.value,
+        "reason_codes": list(decision.reasons),
+        "matched_rule_ids": list(decision.matched_rule_ids),
+        "event_id": event_id,
+        "action_digest": action_digest(proposed.tool, proposed.operation, proposed.resource),
+        "policy_version": "demo-fixture-policy-v1",
+        "authenticated": True,
+        "audit_recorded": True,
+        "execution_authorized": False,
+        "executed": False,
+        "enforcement_ready": False,
+        "local_only": True,
     }
 
 

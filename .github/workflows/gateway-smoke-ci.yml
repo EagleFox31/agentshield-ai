@@ -413,6 +413,72 @@ jobs:
             -H "Authorization: Bearer $operator_token" \
             http://127.0.0.1:8787/_local/demo/ai-adapter-contract > /tmp/worker-ai-sandbox-third.json
           python -c 'import json; d=json.load(open("/tmp/worker-ai-sandbox-third.json")); assert d["model_status"]=="triage_unavailable" and d["policy_effect"]=="deny" and not d["remote_inference"]'
+          # First authenticated policy-and-audit HTTP boundary: no real tool.
+          for fixture in valid approval_agent; do
+            suffix="$fixture"
+            curl --fail --silent --show-error \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482"}' \
+              http://127.0.0.1:8787/_local/decisions > "/tmp/decision-$suffix.json"
+          done
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/_local/decisions > /tmp/decision-allowed.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"cloud","operation":"delete_bucket","resource":"bucket/demo"}' \
+            http://127.0.0.1:8787/_local/decisions > /tmp/decision-unknown.json
+          python - <<'PY_DECISIONS'
+          import json
+          from pathlib import Path
+          scenarios = {
+              "valid": ("deny", "REQUIRED_SCOPE_MISSING"),
+              "approval_agent": ("require_approval", "HUMAN_APPROVAL_REQUIRED"),
+              "allowed": ("allow", "EXPLICIT_ALLOW"),
+              "unknown": ("deny", "NO_MATCHING_POLICY"),
+          }
+          ids = set()
+          for name, (effect, reason) in scenarios.items():
+              result = json.loads(Path(f"/tmp/decision-{name}.json").read_text())
+              assert result["effect"] == effect, (name, result)
+              assert result["reason_codes"] == [reason], (name, result)
+              assert result["authenticated"] and result["audit_recorded"]
+              assert result["local_only"] and not result["enforcement_ready"]
+              assert not result["execution_authorized"] and not result["executed"]
+              assert len(result["action_digest"]) == 64
+              assert result["event_id"] not in ids
+              ids.add(result["event_id"])
+          PY_DECISIONS
+          for fixture in bad_signature invalid_scope; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+              http://127.0.0.1:8787/_local/decisions)
+            test "$status" = 401
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/_local/decisions)
+          test "$status" = 401
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","scope":"supplier:write"}' \
+            http://127.0.0.1:8787/_local/decisions)
+          test "$status" = 422
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42"}' \
+            http://127.0.0.1:8787/v1/decisions)
+          test "$status" = 404
+          echo 'Authenticated local decisions are audited and never executable; public tool gateway remains disabled.'
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
       - name: Preserve safe observed local Pyodide version evidence

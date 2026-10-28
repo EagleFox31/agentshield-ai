@@ -82,7 +82,7 @@ def _rules(principal: Principal) -> PolicyEngine:
              "invoice/42", "invoice:read", Effect.ALLOW),
         Rule("demo-supplier-scope-required", principal.id, "suppliers",
              "update_bank_account", "supplier/482", "supplier:write",
-             Effect.ALLOW),
+             Effect.REQUIRE_APPROVAL),
     ])
 
 
