@@ -39,13 +39,36 @@ def make_sql() -> str:
     )
 
 
+REVIEWED_V2 = "ci-local-policy-v2"
+
+
+def reviewed_v2_digest() -> str:
+    return canonical_snapshot(
+        TENANT, REVIEWED_V2, demo_rule_records(PRINCIPAL),
+    )[1]
+
+
+def reviewed_v2_sql() -> str:
+    """Publish but never activate the identical-rules V2 local test fixture."""
+    rules_json, digest = canonical_snapshot(
+        TENANT, REVIEWED_V2, demo_rule_records(PRINCIPAL),
+    )
+    return (
+        "INSERT OR IGNORE INTO policy_versions "
+        "(tenant_id,version,sha256,created_at_ms,rules_json) VALUES ("
+        f"{sql_literal(TENANT)},{sql_literal(REVIEWED_V2)},"
+        f"{sql_literal(digest)},1790000000001,{sql_literal(rules_json)});\\n"
+    ).replace("\\\\n", "\\n")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--include-v2", action="store_true")
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit("Refusing to overwrite an existing fixture SQL file")
-    args.output.write_text(make_sql(), encoding="utf-8")
+    args.output.write_text(make_sql() + (reviewed_v2_sql() if args.include_v2 else ""), encoding="utf-8")
     print("Prepared reviewed CI-only tenant policy seed SQL; no D1 connection.")
 
 
