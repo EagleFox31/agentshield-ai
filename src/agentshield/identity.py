@@ -11,7 +11,6 @@ import time
 from dataclasses import dataclass
 from typing import Mapping
 
-import jwt
 
 from agentshield.policy import Principal
 
@@ -141,6 +140,9 @@ def verify_agent_jwt(token: str, settings: Mapping[str, str], *, now: int | None
     ):
         raise AgentAuthenticationError("Invalid agent bearer token")
 
+    # CPython-only test oracle. Worker routes use native Web Crypto and do not
+    # import or initialize PyJWT or vulnerable compiled cryptography wheels.
+    import jwt
     try:
         header = jwt.get_unverified_header(token)
         if not isinstance(header, dict) or set(header) - _ALLOWED_HEADER:

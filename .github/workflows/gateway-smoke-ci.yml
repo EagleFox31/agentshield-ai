@@ -71,7 +71,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Install HTTP smoke dependencies
-        run: python -m pip install -e . 'httpx>=0.28,<0.29'
+        run: python -m pip install -e . 'httpx>=0.28,<0.29' 'PyJWT==2.15.1' 'cryptography==50.0.2'
       - name: Run independent HTTP + fake-D1 regression suite
         env:
           PYTHONPATH: src

@@ -1,8 +1,8 @@
 # Web Crypto ES256 — isolated Pyodide verification spike
 
-**Scope:** Signature-only cryptographic interoperability in local Cloudflare Python Workers. **Not** an authorization module, a new public endpoint, a vulnerability waiver, a completed migration, or deployment permission.
+**Historical scope:** This document records the initial *signature-only* proof in PR #27. Subsequent PR #28 validated complete JWT claims, and PR #29 migrates experimental local gateway/approval authentication to native Web Crypto. **This probe still is not an authorization module**, production enforcement or deployment permission. See [WEBCRYPTO_JWT_CANDIDATE.md](WEBCRYPTO_JWT_CANDIDATE.md) for the active migration contract.
 
-**Motivation:** [issue #2](https://github.com/EagleFox31/agentshield-ai/issues/2) tracks the Pyodide `cryptography` wheel vulnerability/compatibility constraint. The existing authentication logic in `src/agentshield/identity.py` remains authoritative, including strict JWT claim checks. This experiment uses a different cryptographic primitive only.
+**Motivation:** [issue #2](https://github.com/EagleFox31/agentshield-ai/issues/2) tracks the Pyodide `cryptography` wheel vulnerability/compatibility constraint. The shared JWT claim rules in `src/agentshield/identity.py` remain authoritative, while PR #29 switches the experimental Worker signature primitive to native Web Crypto. This experiment uses a different cryptographic primitive only.
 
 ## How it is isolated
 

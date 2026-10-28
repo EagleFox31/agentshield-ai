@@ -20,7 +20,7 @@ from agentshield.audit import AuditStorageError, decode_event
 from agentshield.merkle import build_manifest, inclusion_path, validate_manifest, InvalidEvidence
 from agentshield.identity import (
     AgentAuthenticationError, IdentityConfigurationError,
-    VerifiedAgent, require_bearer,
+    VerifiedAgent,
 )
 from agentshield.policy import Effect, PolicyEngine, Principal, Rule, ToolAction
 from agentshield.detection import UntrustedSegment, ToolObservation, assess_threat
@@ -30,7 +30,7 @@ from agentshield.workers_ai_adapter import WorkersAIBindingAdapter, WorkersAISet
 from agentshield.demo_invoice import INVOICE_TEXT, SUPPLIER_CHANGE, _rules as demo_rules
 from agentshield.approvals_dashboard import DASHBOARD_HTML
 from agentshield.webcrypto_es256_spike import verify_es256_signature_webcrypto
-from agentshield.webcrypto_jwt_candidate import verify_agent_jwt_webcrypto
+from agentshield.webcrypto_jwt_candidate import verify_agent_jwt_webcrypto, require_bearer_webcrypto
 
 router = APIRouter()
 
@@ -51,7 +51,7 @@ def _local_env(request: Request):
     return env
 
 
-def _identity(request: Request, prefix: str, required_scope: str | None = None) -> VerifiedAgent:
+async def _identity(request: Request, prefix: str, required_scope: str | None = None) -> VerifiedAgent:
     env = _local_env(request)
     config = {
         "AGENT_JWT_ISSUER": str(getattr(env, prefix + "_JWT_ISSUER", "") or ""),
@@ -59,7 +59,7 @@ def _identity(request: Request, prefix: str, required_scope: str | None = None) 
         "AGENT_JWKS_JSON": str(getattr(env, prefix + "_JWKS_JSON", "") or ""),
     }
     try:
-        verified = require_bearer(request.headers.get("authorization"), config)
+        verified = await require_bearer_webcrypto(request.headers.get("authorization"), config)
     except IdentityConfigurationError as exc:
         raise HTTPException(status_code=503, detail="Identity trust root unavailable") from exc
     except AgentAuthenticationError as exc:
@@ -115,7 +115,7 @@ def _data(row, now_ms: int) -> dict:
 
 @router.post("/_local/demo/approval-requests")
 async def demo_create(body: DemoAction, request: Request):
-    agent = _identity(request, "AGENT")
+    agent = await _identity(request, "AGENT")
     store = _store(request)
     now = _now()
     try:
@@ -132,7 +132,7 @@ async def demo_create(body: DemoAction, request: Request):
 
 @router.get("/_local/approvals")
 async def operator_list(request: Request):
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     store = _store(request)
     now = _now()
     try:
@@ -148,7 +148,7 @@ async def operator_list(request: Request):
 
 @router.post("/_local/approvals/{approval_id}/{decision}")
 async def operator_review(approval_id: str, decision: Literal["approve", "reject"], request: Request):
-    operator = _identity(request, "OPERATOR", "approvals:decide")
+    operator = await _identity(request, "OPERATOR", "approvals:decide")
     store = _store(request)
     now = _now()
     try:
@@ -173,7 +173,7 @@ async def operator_review(approval_id: str, decision: Literal["approve", "reject
 
 @router.get("/_local/approvals/{approval_id}/audit")
 async def operator_audit(approval_id: str, request: Request):
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     store = _store(request)
     try:
         row = await get_approval(store, operator.tenant_id, approval_id)
@@ -192,7 +192,7 @@ async def operator_audit(approval_id: str, request: Request):
 
 @router.post("/_local/demo/approvals/{approval_id}/consume")
 async def demo_consume(approval_id: str, body: DemoAction, request: Request):
-    agent = _identity(request, "AGENT")
+    agent = await _identity(request, "AGENT")
     store = _store(request)
     try:
         now = _now()
@@ -214,7 +214,7 @@ async def demo_consume(approval_id: str, body: DemoAction, request: Request):
 @router.get("/_local/demo/invoice-evidence")
 async def operator_invoice_attack_evidence(request: Request):
     """Tenant-bound read of redacted demo decisions; no raw hostile document."""
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     store = _store(request)
     try:
         rows = await store.many(
@@ -241,7 +241,7 @@ async def operator_local_merkle_batch(request: Request):
     The caller is an authorized operator of the same tenant. This endpoint
     neither persists a batch nor provides an independently trusted root.
     """
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     store = _store(request)
     try:
         rows = await store.many(
@@ -284,7 +284,7 @@ async def operator_local_threat_triage(request: Request):
     privilege demo Principal demonstrates that the model and source content
     cannot grant scopes or execute supplier tools.
     """
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     fixture_principal = Principal(
         operator.tenant_id + ":invoice_fixture",
         frozenset({"invoice:read"}),
@@ -316,7 +316,7 @@ async def local_ai_adapter_contract(request: Request):
     JWT and a manually provisioned local-D1 quota for the synthetic tenant.
     The existing production-shaped env.AI binding is NOT accessed.
     """
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     env = _local_env(request)
     import secrets
     budget = D1AIBudget(
@@ -365,7 +365,7 @@ async def operator_local_webcrypto_jwt_candidate(request: Request):
     This route is NEVER used by agent authentication, approvals or tools.
     A valid signature alone cannot authenticate the candidate JWT.
     """
-    operator = _identity(request, "OPERATOR", "approvals:read")
+    operator = await _identity(request, "OPERATOR", "approvals:read")
     env = _local_env(request)
     settings = {
         name: str(getattr(env, name, "") or "")
@@ -401,7 +401,7 @@ async def operator_local_webcrypto_es256_probe(request: Request):
     Requires existing operator authentication before attempting the second,
     candidate crypto primitive. Never returns JWT claims or token details.
     """
-    _identity(request, "OPERATOR", "approvals:read")
+    await _identity(request, "OPERATOR", "approvals:read")
     env = _local_env(request)
     settings = {
         name: str(getattr(env, name, "") or "")

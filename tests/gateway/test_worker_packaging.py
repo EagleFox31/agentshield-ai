@@ -16,13 +16,19 @@ class WorkerPackagingTests(unittest.TestCase):
         # dependencies, not solely uv's optional --extra installation.
         dependencies = project["project"].get("dependencies", [])
         self.assertTrue(any(dep.lower().startswith("fastapi") for dep in dependencies))
-        self.assertTrue(any(dep.lower().startswith("pyjwt") for dep in dependencies))
-        # Keep compatible with the Pyodide 314.0.7 compiled cryptography wheel.
-        self.assertIn("cryptography==47.0.0", dependencies)
+        # Vulnerable native wheels and PyJWT remain OFF the actual Worker graph.
+        self.assertFalse(any("pyjwt" in dep.lower() or "cryptography" in dep.lower()
+                             for dep in dependencies))
+        # Patch-level pins for host-only fixture creation are NOT Worker deps.
+        host_tests = project.get("dependency-groups", {}).get("test", [])
+        self.assertIn("PyJWT==2.15.1", host_tests)
+        self.assertIn("cryptography==50.0.2", host_tests)
 
         worker_tools = project.get("dependency-groups", {}).get("worker", [])
         self.assertTrue(any(item.startswith("workers-py") for item in worker_tools))
         self.assertTrue(any(item.startswith("workers-runtime-sdk") for item in worker_tools))
+        self.assertIn("PyJWT==2.15.1", worker_tools)
+        self.assertIn("cryptography==50.0.2", worker_tools)
 
     def test_local_d1_config_cannot_reference_a_real_database(self):
         data = json.loads((ROOT / "wrangler.jsonc").read_text(encoding="utf-8"))

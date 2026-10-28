@@ -8,6 +8,7 @@ import json
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -32,6 +33,11 @@ class ScopeEnv:
         scope = dict(scope)
         scope["env"] = self.env
         await app(scope, receive, send)
+
+
+async def host_only_test_oracle(authorization, settings):
+    """CPython HTTP-contract fixture; real Worker CI uses native Web Crypto."""
+    return require_bearer(authorization, settings)
 
 
 class JwtIdentityTests(unittest.TestCase):
@@ -80,14 +86,24 @@ class JwtIdentityTests(unittest.TestCase):
         self.assertEqual(result.token_id, "nonce123456789")
 
     def test_authenticated_http_endpoint_never_executes_or_claims_ready(self):
+        with patch("agentshield.gateway.require_bearer_webcrypto", new=host_only_test_oracle):
+            with TestClient(ScopeEnv(self.settings)) as client:
+                res = client.get("/v1/identity", headers={"Authorization": "Bearer " + self.token()})
+                self.assertEqual(res.status_code, 200)
+                self.assertEqual(res.json()["tenant_id"], "tenant_01")
+                self.assertEqual(res.json()["agent_id"], "invoice-agent-1")
+                self.assertFalse(res.json()["enforcement_ready"])
+                self.assertFalse(res.json()["executed"])
+                self.assertNotIn("jti", res.text)
+
+    def test_native_worker_verifier_fails_closed_without_js_ffi(self):
+        # No automatic fallback to patched host PyJWT on plain CPython.
         with TestClient(ScopeEnv(self.settings)) as client:
-            res = client.get("/v1/identity", headers={"Authorization": "Bearer " + self.token()})
-            self.assertEqual(res.status_code, 200)
-            self.assertEqual(res.json()["tenant_id"], "tenant_01")
-            self.assertEqual(res.json()["agent_id"], "invoice-agent-1")
-            self.assertFalse(res.json()["enforcement_ready"])
-            self.assertFalse(res.json()["executed"])
-            self.assertNotIn("jti", res.text)
+            res = client.get("/v1/identity", headers={
+                "Authorization": "Bearer " + self.token(),
+            })
+            self.assertEqual(res.status_code, 401)
+            self.assertNotIn("token", res.text.lower())
 
     def test_missing_verifier_or_token_fails_closed(self):
         with TestClient(app) as client:

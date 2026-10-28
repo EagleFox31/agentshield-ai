@@ -4,8 +4,8 @@ This spike reuses the *existing* pinned trust-store validation from identity.py.
 It deliberately verifies signatures ONLY: it does not parse/validate claims,
 issue VerifiedAgent, assign scopes, change approval or execute tools.
 
-The production authorization path continues to use PyJWT until a complete
-independently reviewed ES256 + claims implementation is approved.
+The native Worker JWT path now uses the complete claim verifier; this
+signature-only probe itself NEVER authenticates tokens or grants permission.
 """
 from __future__ import annotations
 
