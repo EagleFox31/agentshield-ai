@@ -26,6 +26,9 @@ on:
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
       - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
       - '.github/workflows/gateway-smoke-ci.yml'
   push:
     branches: [main]
@@ -53,6 +56,9 @@ on:
       - 'tests/gateway/**'
       - 'wrangler.jsonc'
       - 'pyproject.toml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'docs/WORKER_TOOLCHAIN_PROVENANCE.md'
       - '.github/workflows/gateway-smoke-ci.yml'
   workflow_dispatch:
 
@@ -101,16 +107,34 @@ jobs:
         with:
           version: '0.12.3'
           python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Bootstrap pinned npm toolchain lock (first PR run only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
+            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+            echo 'WRANGLER_NPM_LOCK_BEGIN'
+            cat package-lock.json
+            echo 'WRANGLER_NPM_LOCK_END'
+            exit 1
+          fi
+          npm ci --ignore-scripts --no-audit --no-fund
+          node -e 'const p=require("./node_modules/wrangler/package.json"); if(p.version!=="4.154.0") process.exit(1)'
+          ./node_modules/.bin/wrangler --version
+          echo "$GITHUB_WORKSPACE/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Create ephemeral ES256 identity fixtures (no hosted issuer)
         run: uv run --locked --group worker python scripts/make_local_identity_fixture.py
       - name: Apply portable audit schema to LOCAL D1 only
         run: |
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
-          npx --yes wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0001_audit_core.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0002_approval_review.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
           # Manually provision a tiny quota for the synthetic LOCAL tenant.
           # Never configure or invoke a real AI binding in the workflow.
-          npx --yes wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --command="INSERT INTO ai_triage_daily_budget (tenant_id,utc_day,max_requests,max_reserved_tokens) VALUES ('ci_local','2026-10-26',2,4288)"
       - name: Start local Pywrangler and probe FastAPI / D1 binding
         shell: bash
         run: |
