@@ -417,7 +417,7 @@ jobs:
 
       - name: Preserve safe observed local Pyodide version evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: local-worker-runtime-provenance
           path: /tmp/agentshield-worker-platform.json
