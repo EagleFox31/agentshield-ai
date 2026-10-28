@@ -136,6 +136,7 @@ jobs:
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0003_ai_triage_budget.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0004_policy_snapshots.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0005_policy_activation_audit.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0006_idempotent_decisions.sql
           # Publish an INACTIVE reviewed V2 with identical rules, so old
           # approvals must be invalidated solely by the version transition.
           uv run --locked --group worker python scripts/seed_local_policy_registry.py --include-v2 --output /tmp/agentshield-ci-policy.sql
@@ -685,6 +686,73 @@ jobs:
             http://127.0.0.1:8787/_local/test-executions > /tmp/activation-v2-mock.json
           python -c 'import json;d=json.load(open("/tmp/activation-v2-mock.json"));assert d["policy_version"]=="ci-local-policy-v2" and d["mock_result"]=="mock_supplier_write_dry_run" and not d["real_tool_called"]'
           echo 'Atomic operator policy CAS V1->V2 audited; stale grants revoked and new mock grant works.'
+
+          # A durable signed tenant-scoped decision key is not a tool permit.
+          # Run AFTER reviewed policy v2 activation and verify retries do not
+          # create a new event or return a decision from v1.
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-retry-00001"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions > /tmp/idempotent-first.json
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-retry-00001"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions > /tmp/idempotent-retry.json
+          python - <<'PY_IDEMPOTENT'
+          import json
+          from pathlib import Path
+          first=json.loads(Path("/tmp/idempotent-first.json").read_text())
+          second=json.loads(Path("/tmp/idempotent-retry.json").read_text())
+          assert first["event_id"]==second["event_id"]
+          assert first["effect"]==second["effect"]=="allow"
+          assert first["policy_version"]==second["policy_version"]=="ci-local-policy-v2"
+          assert first["policy_sha256"]==second["policy_sha256"]
+          assert first["replayed"] is False and second["replayed"] is True
+          assert first["audit_recorded"] and second["audit_recorded"]
+          assert first["authenticated"] and second["authenticated"]
+          for result in (first,second):
+              assert not result["execution_authorized"] and not result["executed"]
+              assert result["local_only"] and not result["enforcement_ready"]
+          PY_IDEMPOTENT
+          for body in \
+            '{"tool":"suppliers","operation":"update_bank_account","resource":"supplier/482","request_id":"decision-ci-retry-00001"}' \
+            '{"tool":"invoices","operation":"read","resource":"invoice/43","request_id":"decision-ci-retry-00001"}'; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+              -H 'Content-Type: application/json' -d "$body" \
+              http://127.0.0.1:8787/_local/idempotent-decisions)
+            test "$status" = 409
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/approval_agent.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-retry-00001"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions)
+          test "$status" = 409
+          for fixture in bad_signature operator_valid; do
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
+              -H 'Content-Type: application/json' \
+              -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-bad-jwt-001"}' \
+              http://127.0.0.1:8787/_local/idempotent-decisions)
+            test "$status" = 401
+          done
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-forged-001","policy_version":"ci-local-policy-v1"}' \
+            http://127.0.0.1:8787/_local/idempotent-decisions)
+          test "$status" = 422
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
+            -H 'Content-Type: application/json' \
+            -d '{"tool":"invoices","operation":"read","resource":"invoice/42","request_id":"decision-ci-public-001"}' \
+            http://127.0.0.1:8787/v1/idempotent-decisions)
+          test "$status" = 404
+          echo 'Local Pyodide/D1 idempotent receipts: exact retry, one audit, scope/action collision refusal verified.'
+
           echo 'Workers AI candidate validated ONLY with fake binding and atomic local D1 quota; no live inference.'
 
       - name: Preserve safe observed local Pyodide version evidence
