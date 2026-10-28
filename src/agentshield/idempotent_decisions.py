@@ -20,6 +20,20 @@ from agentshield.policy_registry import D1PolicyRegistry, SQLitePolicyRegistry, 
 
 _REQUEST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$")
 _RETENTION_MS = 30 * 86_400_000
+# Conservative LOCAL demo quota: one admission per fresh request key,
+# shared by all authenticated principals of the signed tenant.
+_WINDOW_MS = 60_000
+_MAX_NEW_DECISIONS_PER_TENANT_WINDOW = 16
+_INSERT_RATE_SLOT = (
+    "INSERT INTO tenant_decision_rate_slots "
+    "(tenant_id,window_start_ms,request_id,admitted_at_ms) "
+    "SELECT ?,?,?,? WHERE NOT EXISTS ("
+    "SELECT 1 FROM decision_requests WHERE tenant_id=? AND request_id=?) "
+    "AND (SELECT COUNT(*) FROM tenant_decision_rate_slots "
+    "WHERE tenant_id=? AND window_start_ms=?) < ? "
+    "ON CONFLICT(tenant_id,request_id) DO NOTHING"
+)
+
 _ACTIVE = (
     "SELECT a.version,a.activated_at_ms,COALESCE(a.activation_marker,'') AS marker "
     "FROM active_policy_versions a WHERE a.tenant_id=?"
@@ -38,6 +52,8 @@ _INSERT = (
     "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS ("
     "SELECT 1 FROM active_policy_versions WHERE tenant_id=? AND version=? "
     "AND activated_at_ms=? AND COALESCE(activation_marker,'')=?) "
+    "AND EXISTS (SELECT 1 FROM tenant_decision_rate_slots "
+    "WHERE tenant_id=? AND request_id=? AND window_start_ms=?) "
     "ON CONFLICT(tenant_id,request_id) DO NOTHING"
 )
 _INSERT_AUDIT = (
@@ -53,6 +69,10 @@ _INSERT_AUDIT = (
 
 class DecisionReplayConflict(ValueError):
     """Request key reused with changed identity/action/policy, or expired."""
+
+
+class DecisionRateLimited(ValueError):
+    """Signed tenant reached its bounded local admission quota."""
 
 
 @dataclass(frozen=True)
@@ -128,9 +148,18 @@ async def decide_idempotently(
         policy_version=active.version, occurred_at_ms=now_ms,
         retention_until_ms=now_ms + _RETENTION_MS,
     )
-    # A conflicting key cannot overwrite any existing row or its immutable
-    # audit event. Both INSERTs share a SQLite/D1 batch transaction.
+    # No existing receipt means a new request needs a quota slot.
+    # The rate-slot reservation, immutable receipt and audit event are one
+    # SERIALIZED D1/SQLite transaction. The slot check counts all principals
+    # in the tenant, including denied actions, and prevents concurrent bypass.
+    # Exact retries do not consume slots again.
+    window = now_ms // _WINDOW_MS * _WINDOW_MS
     await store.atomic([
+        (_INSERT_RATE_SLOT, (
+            agent.tenant_id, window, request_id, now_ms,
+            agent.tenant_id, request_id, agent.tenant_id, window,
+            _MAX_NEW_DECISIONS_PER_TENANT_WINDOW,
+        )),
         (_INSERT, (
             agent.tenant_id, request_id, agent.principal.id, digest,
             active.version, active.sha256, epoch, marker, event_id,
@@ -139,13 +168,21 @@ async def decide_idempotently(
             json.dumps(list(decision.matched_rule_ids), separators=(",", ":")),
             now_ms, now_ms + _RETENTION_MS,
             agent.tenant_id, active.version, epoch, marker,
+            agent.tenant_id, request_id, window,
         )),
         (_INSERT_AUDIT, event_arguments(event) +
          (agent.tenant_id, request_id, event_id, digest)),
     ])
     row = await store.first(_FIND, (agent.tenant_id, request_id))
     if row is None:
-        raise DecisionReplayConflict("Policy version changed or request not committed")
+        # A stale generation or a cap hit must never mint a fake ALLOW;
+        # distinguish them only after confirming the current generation.
+        current = await store.first(_ACTIVE, (agent.tenant_id,))
+        if (current is None or current["version"] != active.version
+            or current["activated_at_ms"] != epoch
+            or current["marker"] != marker):
+            raise DecisionReplayConflict("Policy version changed during admission")
+        raise DecisionRateLimited("Tenant decision admission quota exceeded")
     if (row["principal_id"] != agent.principal.id
         or row["request_sha256"] != digest
         or row["policy_version"] != active.version
