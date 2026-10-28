@@ -110,17 +110,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Bootstrap pinned npm toolchain lock (first PR run only)
+      - name: Install reviewed npm lock (no floating Wrangler)
         shell: bash
         run: |
           set -euo pipefail
-          if ! git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
-            npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-            echo 'WRANGLER_NPM_LOCK_BEGIN'
-            cat package-lock.json
-            echo 'WRANGLER_NPM_LOCK_END'
-            exit 1
-          fi
+          git ls-files --error-unmatch package-lock.json >/dev/null
           npm ci --ignore-scripts --no-audit --no-fund
           node -e 'const p=require("./node_modules/wrangler/package.json"); if(p.version!=="4.154.0") process.exit(1)'
           ./node_modules/.bin/wrangler --version
