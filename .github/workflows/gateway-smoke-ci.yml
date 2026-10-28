@@ -753,11 +753,14 @@ jobs:
             http://127.0.0.1:8787/v1/idempotent-decisions)
           test "$status" = 404
           echo 'Local Pyodide/D1 idempotent receipts: exact retry, one audit, scope/action collision refusal verified.'
-          # P0 quota: the earlier signed idempotent request used one slot.
-          # 15 unique requests fill this LOCAL tenant's 16/min allowance.
+          # The previous decision may have been in another fixed minute.
+          # Start just after a fresh minute boundary for a deterministic
+          # 16 NEW requests + 17th denied test, without test-only clocks.
+          # JWT fixtures last 240 seconds; no remote or public call is made.
+          sleep $((61 - $(date -u +%s) % 60))
           # Repeated key must still return the initial immutable receipt
           # without allocating any new slot.
-          for i in $(seq 1 15); do
+          for i in $(seq 1 16); do
             key=$(printf 'ci-quota-decision-%06d' "$i")
             curl --fail --silent --show-error \
               -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
