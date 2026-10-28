@@ -19,6 +19,7 @@ from agentshield.audit import AuditStorageError
 from agentshield.demo_invoice import run_invoice_attack, _rules as demo_rules
 from agentshield.audit_service import decide_and_audit
 from agentshield.idempotent_decisions import decide_idempotently, DecisionReplayConflict, DecisionRateLimited
+from agentshield.mock_dispatch_boundary import dispatch_claimed_invoice_mock, MockDispatchRejected
 from agentshield.local_command_outbox import (
     queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
 )
@@ -218,6 +219,38 @@ class LocalCommandQueueRequest(BaseModel):
         min_length=16, max_length=96,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$",
     )
+
+
+@app.post("/_local/commands/{command_id}/dry-run")
+async def local_fenced_mock_dispatch(
+    command_id: str, request: Request,
+) -> dict[str, object]:
+    """Original signed agent + independent claimed outbox => one local stub.
+
+    No arbitrary request arguments, URL, provider SDK or external execution.
+    """
+    env = _require_local_smoke(request)
+    agent = await _verified_local_identity(request, "AGENT")
+    try:
+        db = getattr(env, "DB", None)
+        receipt = await dispatch_claimed_invoice_mock(
+            D1ApprovalStore(db), D1AuditRepository(db), D1PolicyRegistry(db),
+            agent, command_id=command_id,
+            now_ms=int(time.time() * 1000), adapter=LocalDryRunAdapter(),
+        )
+    except MockDispatchRejected as exc:
+        raise HTTPException(status_code=409, detail="Mock dispatch rejected") from exc
+    except (AuditStorageError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="Mock dispatch evidence unavailable") from exc
+    return {
+        "command_id": receipt.command_id,
+        "dispatch_id": receipt.dispatch_id,
+        "audit_event_id": receipt.audit_event_id,
+        "policy_version": receipt.policy_version,
+        "mock_invoked": True, "mock_result": receipt.stub_name,
+        "audit_recorded": True, "real_tool_called": False,
+        "executed": False, "enforcement_ready": False, "local_only": True,
+    }
 
 
 @app.post("/_local/commands/queue")
