@@ -185,7 +185,7 @@ async def local_test_execution(body: LocalTestExecution, request: Request) -> di
         repo = D1AuditRepository(database)
         approvals = D1ApprovalStore(database)
         return await execute_local_mock(
-            repo, approvals, agent,
+            repo, approvals, D1PolicyRegistry(database), agent,
             ToolAction(body.tool, body.operation, body.resource),
             fixture=body.fixture, nonce=body.nonce,
             approval_id=body.approval_id,

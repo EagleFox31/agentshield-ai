@@ -146,7 +146,8 @@ class D1ApprovalStore:
             raise AuditStorageError("D1 approval transaction failed") from exc
 
 
-def exact_digest(agent: VerifiedAgent, action: ToolAction, args: dict[str, str]) -> str:
+def exact_digest(agent: VerifiedAgent, action: ToolAction, args: dict[str, str],
+                 *, policy_version: str = POLICY_VERSION) -> str:
     if (not isinstance(args, dict) or len(args) > 8
         or any(not isinstance(k, str) or not isinstance(v, str)
                or len(k) > 32 or len(v) > 128 for k, v in args.items())):
@@ -154,7 +155,7 @@ def exact_digest(agent: VerifiedAgent, action: ToolAction, args: dict[str, str])
     canonical = json.dumps(
         {"schema": "agentshield.exact-action.v1", "tenant": agent.tenant_id,
          "actor": agent.principal.id, "scopes": sorted(agent.principal.scopes),
-         "policy_version": POLICY_VERSION, "tool": action.tool,
+         "policy_version": policy_version, "tool": action.tool,
          "operation": action.operation, "resource": action.resource,
          "arguments": args},
         sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -164,11 +165,12 @@ def exact_digest(agent: VerifiedAgent, action: ToolAction, args: dict[str, str])
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _event(tenant: str, actor: str, digest: str, reason: str, now_ms: int) -> AuditEvent:
+def _event(tenant: str, actor: str, digest: str, reason: str,
+           now_ms: int, policy_version: str = POLICY_VERSION) -> AuditEvent:
     return AuditEvent(
         event_id="audit-" + secrets.token_hex(16), tenant_id=tenant,
         principal_id=actor, action_digest=digest, effect="require_approval",
-        reason_codes=(reason,), policy_version=POLICY_VERSION,
+        reason_codes=(reason,), policy_version=policy_version,
         occurred_at_ms=now_ms, retention_until_ms=now_ms + RETENTION_MS,
     )
 
@@ -200,21 +202,57 @@ def _audit_if_transition(
 async def create_pending(
     store: ApprovalStore, agent: VerifiedAgent,
     action: ToolAction, arguments: dict[str, str], engine: PolicyEngine, now_ms: int,
+    *, policy_version: str | None = None,
 ) -> Approval:
     decision = engine.evaluate(agent.principal, action)
     if decision.effect != Effect.REQUIRE_APPROVAL:
         raise ApprovalRejected("Action not eligible for human review")
-    digest = exact_digest(agent, action, arguments)
+    active_version = policy_version if policy_version is not None else POLICY_VERSION
+    digest = exact_digest(agent, action, arguments, policy_version=active_version)
     approval_id = _id("approval")
     expires = now_ms + MAX_APPROVAL_MS
-    audit = _event(agent.tenant_id, agent.principal.id, digest, "HUMAN_APPROVAL_REQUIRED", now_ms)
-    await store.atomic([
-        (INSERT_APPROVAL, (approval_id, agent.tenant_id, agent.principal.id,
-                           digest, POLICY_VERSION, expires, now_ms)),
-        (INSERT_AUDIT, event_arguments(audit) + (approval_id,)),
-    ])
+    audit = _event(agent.tenant_id, agent.principal.id, digest,
+                   "HUMAN_APPROVAL_REQUIRED", now_ms, active_version)
+    if policy_version is None:
+        statements = [
+            (INSERT_APPROVAL, (approval_id, agent.tenant_id, agent.principal.id,
+                               digest, active_version, expires, now_ms)),
+            (INSERT_AUDIT, event_arguments(audit) + (approval_id,)),
+        ]
+    else:
+        # Existing legacy offline fixtures use the pre-registry API. A caller
+        # choosing a specific version must be checked against the ACTIVE D1
+        # pointer IN THE SAME transaction as the pending request/audit insert.
+        insert_active = (
+            "INSERT INTO approval_requests "
+            "(approval_id,tenant_id,principal_id,action_digest,policy_version,"
+            "state,expires_at_ms,created_at_ms) "
+            "SELECT ?,?,?,?,?,'pending',?,? "
+            "WHERE EXISTS (SELECT 1 FROM active_policy_versions "
+            "WHERE tenant_id=? AND version=?)"
+        )
+        audit_active = (
+            "INSERT INTO audit_events "
+            "(event_id,tenant_id,principal_id,action_digest,effect,reason_codes_json,"
+            "policy_version,occurred_at_ms,retention_until_ms,event_sha256,approval_id) "
+            "SELECT ?,?,?,?,?,?,?,?,?,?,? "
+            "WHERE EXISTS (SELECT 1 FROM approval_requests "
+            "WHERE approval_id=? AND tenant_id=? AND policy_version=?)"
+        )
+        statements = [
+            (insert_active, (approval_id, agent.tenant_id, agent.principal.id,
+                             digest, active_version, expires, now_ms,
+                             agent.tenant_id, active_version)),
+            (audit_active, event_arguments(audit) +
+             (approval_id, approval_id, agent.tenant_id, active_version)),
+        ]
+    await store.atomic(statements)
+    if policy_version is not None:
+        stored = await get_approval(store, agent.tenant_id, approval_id)
+        if stored is None:
+            raise ApprovalRejected("Policy version changed before approval creation")
     return Approval(approval_id, agent.tenant_id, agent.principal.id,
-                    digest, POLICY_VERSION, "pending", expires, now_ms)
+                    digest, active_version, "pending", expires, now_ms)
 
 
 async def get_approval(store: ApprovalStore, tenant: str, approval_id: str) -> Approval | None:
@@ -228,23 +266,31 @@ async def list_approvals(store: ApprovalStore, tenant: str) -> list[Approval]:
 
 async def review(
     store: ApprovalStore, approval_id: str, tenant: str, operator_id: str,
-    decision: str, now_ms: int,
+    decision: str, now_ms: int, *, current_policy_version: str | None = None,
 ) -> bool:
     if decision not in ("approved", "rejected"):
         raise ApprovalRejected("Unrecognized human decision")
     existing = await get_approval(store, tenant, approval_id)
     if existing is None or existing.state != "pending" or existing.expires_at_ms <= now_ms:
         return False
+    if current_policy_version is not None and existing.policy_version != current_policy_version:
+        return False
     if operator_id == existing.principal_id:
         raise ApprovalRejected("Agent cannot approve itself")
     transition_id = _id("decision")
     event = _event(tenant, operator_id, existing.action_digest,
                    "HUMAN_APPROVAL_GRANTED" if decision == "approved" else "HUMAN_APPROVAL_REJECTED",
-                   now_ms)
+                   now_ms, existing.policy_version)
+    update_sql = ("UPDATE approval_requests SET state=?,decision_id=? "
+                  "WHERE approval_id=? AND tenant_id=? AND state='pending' AND expires_at_ms>?")
+    values = (decision, transition_id, approval_id, tenant, now_ms)
+    if current_policy_version is not None:
+        update_sql += (" AND policy_version=? AND EXISTS "
+                       "(SELECT 1 FROM active_policy_versions "
+                       "WHERE tenant_id=? AND version=?)")
+        values += (current_policy_version, tenant, current_policy_version)
     await store.atomic([
-        ("UPDATE approval_requests SET state=?,decision_id=? "
-         "WHERE approval_id=? AND tenant_id=? AND state='pending' AND expires_at_ms>?",
-         (decision, transition_id, approval_id, tenant, now_ms)),
+        (update_sql, values),
         ("INSERT INTO approval_decisions "
          "(decision_id,approval_id,tenant_id,approver_id,decision,decided_at_ms) "
          "SELECT ?,approval_id,tenant_id,?,?,? FROM approval_requests "
@@ -268,7 +314,7 @@ async def expire_if_needed(
         return False
     marker = _id("expire")
     event = _event(tenant, tenant + ":system", previous.action_digest,
-                   "HUMAN_APPROVAL_EXPIRED", now_ms)
+                   "HUMAN_APPROVAL_EXPIRED", now_ms, previous.policy_version)
     # An approved grant may expire too; preserve its human decision_id
     # while binding expiration through the separate consumption marker.
     marker_column = "decision_id" if previous.state == "pending" else "consume_event_id"
@@ -289,25 +335,36 @@ async def expire_if_needed(
 async def consume_mock(
     store: ApprovalStore, agent: VerifiedAgent, approval_id: str,
     action: ToolAction, arguments: dict[str, str],
-    engine: PolicyEngine, now_ms: int,
+    engine: PolicyEngine, now_ms: int, *, policy_version: str | None = None,
 ) -> bool:
+    active_version = policy_version if policy_version is not None else POLICY_VERSION
     existing = await get_approval(store, agent.tenant_id, approval_id)
     if (existing is None or existing.state != "approved"
         or existing.principal_id != agent.principal.id
-        or existing.policy_version != POLICY_VERSION
+        or existing.policy_version != active_version
         or existing.expires_at_ms <= now_ms
-        or existing.action_digest != exact_digest(agent, action, arguments)
+        or existing.action_digest != exact_digest(agent, action, arguments,
+                                                 policy_version=active_version)
         or engine.evaluate(agent.principal, action).effect != Effect.REQUIRE_APPROVAL):
         return False
     marker = _id("consumption")
     event = _event(agent.tenant_id, agent.principal.id, existing.action_digest,
-                   "HUMAN_APPROVAL_CONSUMED", now_ms)
+                   "HUMAN_APPROVAL_CONSUMED", now_ms, active_version)
+    update_sql = (
+        "UPDATE approval_requests SET state='consumed',consumed_at_ms=?,consume_event_id=? "
+        "WHERE approval_id=? AND tenant_id=? AND principal_id=? "
+        "AND action_digest=? AND policy_version=? AND state='approved' AND expires_at_ms>?"
+    )
+    values = (now_ms, marker, approval_id, agent.tenant_id, agent.principal.id,
+              existing.action_digest, active_version, now_ms)
+    if policy_version is not None:
+        # Recheck the active pointer INSIDE the atomic approval + audit
+        # transition: a stale pre-read cannot consume a revoked policy.
+        update_sql += (" AND EXISTS (SELECT 1 FROM active_policy_versions "
+                       "WHERE tenant_id=? AND version=?)")
+        values += (agent.tenant_id, active_version)
     await store.atomic([
-        ("UPDATE approval_requests SET state='consumed',consumed_at_ms=?,consume_event_id=? "
-         "WHERE approval_id=? AND tenant_id=? AND principal_id=? "
-         "AND action_digest=? AND policy_version=? AND state='approved' AND expires_at_ms>?",
-         (now_ms, marker, approval_id, agent.tenant_id, agent.principal.id,
-          existing.action_digest, POLICY_VERSION, now_ms)),
+        (update_sql, values),
         _audit_if_transition(approval_id, "consume_event_id", marker, "consumed", event),
     ])
     final = await store.first(

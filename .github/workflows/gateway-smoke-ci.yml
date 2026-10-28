@@ -296,7 +296,7 @@ jobs:
             -H "Authorization: Bearer $agent_token" -H "Content-Type: application/json" \
             -d '{"fixture":"scenario-A"}' \
             http://127.0.0.1:8787/_local/demo/approval-requests > /tmp/approval-created.json
-          approval_id=$(python -c 'import json; d=json.load(open("/tmp/approval-created.json"));assert d["state"]=="pending"; print(d["approval_id"])')
+          approval_id=$(python -c 'import json; d=json.load(open("/tmp/approval-created.json"));assert d["state"]=="pending" and d["policy_version"]=="ci-local-policy-v1"; print(d["approval_id"])')
           # Agent token cannot impersonate human operator.
           status=$(curl --silent -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer $agent_token" http://127.0.0.1:8787/_local/approvals)
@@ -495,7 +495,7 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"tool":"invoices","operation":"read","resource":"invoice/42","fixture":"scenario-A","nonce":"mock-read-00000001"}' \
             http://127.0.0.1:8787/_local/test-executions > /tmp/mock-read.json
-          python -c 'import json;d=json.load(open("/tmp/mock-read.json"));assert d["effect"]=="allow" and d["mock_result"]=="mock_invoice_read" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
+          python -c 'import json;d=json.load(open("/tmp/mock-read.json"));assert d["effect"]=="allow" and d["policy_version"]=="ci-local-policy-v1" and len(d["policy_sha256"])==64 and d["mock_result"]=="mock_invoice_read" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
           status=$(curl --silent -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer $(cat .local-jwt/valid.txt)" \
             -H 'Content-Type: application/json' \
@@ -533,7 +533,7 @@ jobs:
             -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
             -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-A\",\"nonce\":\"mock-approved-00000001\",\"approval_id\":\"$mock_approval_id\"}" \
             http://127.0.0.1:8787/_local/test-executions > /tmp/mock-approved.json
-          python -c 'import json;d=json.load(open("/tmp/mock-approved.json"));assert d["effect"]=="require_approval" and d["mock_result"]=="mock_supplier_write_dry_run" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
+          python -c 'import json;d=json.load(open("/tmp/mock-approved.json"));assert d["effect"]=="require_approval" and d["policy_version"]=="ci-local-policy-v1" and len(d["policy_sha256"])==64 and d["mock_result"]=="mock_supplier_write_dry_run" and d["mock_invoked"] and d["audit_recorded"] and not d["real_tool_called"] and not d["executed"] and not d["enforcement_ready"]'
           status=$(curl --silent -o /dev/null -w '%{http_code}' \
             -H "Authorization: Bearer $agent_token" -H 'Content-Type: application/json' \
             -d "{\"tool\":\"suppliers\",\"operation\":\"update_bank_account\",\"resource\":\"supplier/482\",\"fixture\":\"scenario-A\",\"nonce\":\"mock-approved-00000002\",\"approval_id\":\"$mock_approval_id\"}" \

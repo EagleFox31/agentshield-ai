@@ -9,7 +9,8 @@ from pathlib import Path
 from agentshield.approvals import SQLiteApprovalStore, create_pending, review
 from agentshield.audit import AuditStorageError
 from agentshield.audit_sqlite import SQLiteAuditRepository
-from agentshield.demo_invoice import INVOICE, SUPPLIER_CHANGE, _rules
+from agentshield.demo_invoice import INVOICE, SUPPLIER_CHANGE, _rules, demo_rule_records
+from agentshield.policy_registry import SQLitePolicyRegistry, canonical_snapshot
 from agentshield.identity import VerifiedAgent
 from agentshield.local_tool_gate import (
     LocalDryRunAdapter, MockGateRejected, execute_local_mock,
@@ -26,10 +27,26 @@ def run(coro):
 class LocalMockExecutionTests(unittest.TestCase):
     def setUp(self):
         self.db = sqlite3.connect(":memory:")
-        for name in ("0001_audit_core.sql", "0002_approval_review.sql"):
+        for name in ("0001_audit_core.sql", "0002_approval_review.sql", "0004_policy_snapshots.sql"):
             self.db.executescript((ROOT / "migrations" / name).read_text())
         self.repo = SQLiteAuditRepository(self.db)
         self.store = SQLiteApprovalStore(self.db)
+        self.version = "ci-local-policy-v1"
+        fixture_principal = Principal("ci_local:demo-agent",
+                                      frozenset({"invoice:read", "supplier:write"}))
+        encoded, digest = canonical_snapshot(
+            "ci_local", self.version, demo_rule_records(fixture_principal))
+        self.db.execute(
+            "INSERT INTO policy_versions "
+            "(tenant_id,version,sha256,created_at_ms,rules_json) VALUES (?,?,?,?,?)",
+            ("ci_local", self.version, digest, 1790000000000, encoded),
+        )
+        self.db.execute(
+            "INSERT INTO active_policy_versions "
+            "(tenant_id,version,activated_at_ms) VALUES (?,?,?)",
+            ("ci_local", self.version, 1790000000000),
+        )
+        self.registry = SQLitePolicyRegistry(self.db)
         self.now = 1_790_000_100_000
         self.adapter = LocalDryRunAdapter()
         self.agent = self.identity()
@@ -49,7 +66,7 @@ class LocalMockExecutionTests(unittest.TestCase):
                store=None, adapter=None):
         return run(execute_local_mock(
             repository or self.repo, store or self.store,
-            agent or self.agent, action, fixture=fixture,
+            self.registry, agent or self.agent, action, fixture=fixture,
             nonce=nonce, approval_id=approval_id,
             now_ms=self.now, adapter=adapter or self.adapter,
         ))
@@ -59,10 +76,12 @@ class LocalMockExecutionTests(unittest.TestCase):
         row = run(create_pending(
             self.store, actor, SUPPLIER_CHANGE, {"fixture": "scenario-A"},
             _rules(actor.principal), self.now - 20,
+            policy_version=self.version,
         ))
         self.assertTrue(run(review(
             self.store, row.approval_id, actor.tenant_id,
             f"{actor.tenant_id}:human-reviewer", "approved", self.now - 10,
+            current_policy_version=self.version,
         )))
         return actor, row.approval_id
 
@@ -140,7 +159,7 @@ class LocalMockExecutionTests(unittest.TestCase):
             self.identity(subject="another-agent", scopes=("invoice:read", "supplier:write")),
             self.identity(scopes=("supplier:write",)),
         ):
-            with self.subTest(changed=changed.principal.id), self.assertRaises(MockGateRejected):
+            with self.subTest(changed=changed.principal.id), self.assertRaises((MockGateRejected, AuditStorageError)):
                 self.invoke(SUPPLIER_CHANGE, agent=changed, approval_id=approval_id,
                             nonce="unique-nonce-" + changed.agent_id.replace("_", "-"))
         self.assertEqual(self.adapter.calls, [])
@@ -178,6 +197,86 @@ class LocalMockExecutionTests(unittest.TestCase):
         self.assertEqual(self.db.execute(
             "SELECT state FROM approval_requests WHERE approval_id=?", (approval_id,)
         ).fetchone()[0], "approved")
+
+    def activate_same_rules_with_new_version(self):
+        new_version = "ci-local-policy-v2"
+        fixture_principal = Principal("ci_local:demo-agent",
+                                      frozenset({"invoice:read", "supplier:write"}))
+        raw, digest = canonical_snapshot(
+            "ci_local", new_version, demo_rule_records(fixture_principal))
+        self.db.execute(
+            "INSERT INTO policy_versions "
+            "(tenant_id,version,sha256,created_at_ms,rules_json) VALUES (?,?,?,?,?)",
+            ("ci_local", new_version, digest, self.now, raw),
+        )
+        self.db.execute(
+            "UPDATE active_policy_versions SET version=?,activated_at_ms=? "
+            "WHERE tenant_id='ci_local'", (new_version, self.now),
+        )
+        return new_version
+
+    def test_grant_from_old_policy_revoked_even_when_new_rules_are_identical(self):
+        actor, approval_id = self.approval()
+        self.activate_same_rules_with_new_version()
+        with self.assertRaises(MockGateRejected):
+            self.invoke(SUPPLIER_CHANGE, agent=actor, approval_id=approval_id)
+        self.assertEqual(self.adapter.calls, [])
+        self.assertEqual(self.db.execute(
+            "SELECT state FROM approval_requests WHERE approval_id=?", (approval_id,)
+        ).fetchone()[0], "approved")
+        stored = self.db.execute(
+            "SELECT effect,policy_version FROM audit_events "
+            "WHERE event_id LIKE 'mock-decision-%' ORDER BY occurred_at_ms DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(tuple(stored), ("require_approval", "ci-local-policy-v2"))
+
+    def test_no_stale_grant_creation_when_current_version_changed(self):
+        actor = self.identity(scopes=("invoice:read", "supplier:write"))
+        self.activate_same_rules_with_new_version()
+        from agentshield.approvals import ApprovalRejected
+        with self.assertRaises(ApprovalRejected):
+            run(create_pending(
+                self.store, actor, SUPPLIER_CHANGE, {"fixture": "scenario-A"},
+                _rules(actor.principal), self.now,
+                policy_version=self.version,
+            ))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM approval_requests").fetchone()[0], 0)
+
+    def test_pending_old_version_cannot_be_reviewed_after_switch(self):
+        actor = self.identity(scopes=("invoice:read", "supplier:write"))
+        row = run(create_pending(
+            self.store, actor, SUPPLIER_CHANGE, {"fixture": "scenario-A"},
+            _rules(actor.principal), self.now - 30,
+            policy_version=self.version,
+        ))
+        self.activate_same_rules_with_new_version()
+        self.assertFalse(run(review(
+            self.store, row.approval_id, actor.tenant_id,
+            f"{actor.tenant_id}:human-reviewer", "approved", self.now,
+            current_policy_version="ci-local-policy-v2",
+        )))
+        self.assertEqual(self.db.execute(
+            "SELECT state FROM approval_requests WHERE approval_id=?",
+            (row.approval_id,)
+        ).fetchone()[0], "pending")
+
+    def test_activation_between_policy_read_and_mock_dispatch_rejects(self):
+        original_registry = self.registry
+
+        class SwitchingRegistry:
+            calls = 0
+
+            async def load_active(inner, tenant_id):
+                inner.calls += 1
+                if inner.calls == 2:
+                    self.activate_same_rules_with_new_version()
+                return await original_registry.load_active(tenant_id)
+
+        self.registry = SwitchingRegistry()
+        with self.assertRaises(MockGateRejected):
+            self.invoke()
+        self.assertEqual(self.adapter.calls, [])
 
     def test_adapter_does_not_accept_unlisted_tools_even_on_direct_call(self):
         with self.assertRaises(MockGateRejected):
