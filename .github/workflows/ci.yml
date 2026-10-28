@@ -56,7 +56,13 @@ jobs:
         run: |
           set -euo pipefail
           git ls-files --error-unmatch uv.lock >/dev/null
-          uv lock --check --python 3.13
+          if ! uv lock --check --python 3.13; then
+            uv lock --python 3.13
+            echo LOCK_GENERATION_BEGIN_V2
+            cat uv.lock
+            echo LOCK_GENERATION_END_V2
+            exit 1
+          fi
           git diff --exit-code -- uv.lock
 
   dependency-integrity:
