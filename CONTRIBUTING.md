@@ -8,6 +8,8 @@ Thank you for improving an open-source project focused on practical security bou
 3. Keep security controls deterministic wherever possible; a language model may help explain risk, but must not be the only authorization mechanism.
 4. Never commit real prompts, credentials, access tokens or user-identifying data.
 
+For a clean-room Python 3.13 setup, locked dependency resolution, and local Cloudflare Worker/D1 checks, use [the reproducible development runbook](docs/REPRODUCIBLE_DEVELOPMENT.md). Never treat a host-only lock as proof of Pyodide package compatibility.
+
 ## Contribution quality bar
 - Include tests for both allowed and denied paths, plus failure/replay cases when relevant.
 - Document scope, guarantees, exclusions and limitations.
