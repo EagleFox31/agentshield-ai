@@ -76,15 +76,19 @@ def dispatch_mock(effect: Effect, action: ToolAction, tools: RecordingMockTools)
     raise RuntimeError("No execution adapter for high-impact actions")
 
 
-def _rules(principal: Principal) -> PolicyEngine:
-    return PolicyEngine([
+def demo_rule_records(principal: Principal) -> tuple[Rule, ...]:
+    """Single source of demo rule data, reused for offline registry seeding."""
+    return (
         Rule("demo-invoice-read", principal.id, "invoices", "read",
              "invoice/42", "invoice:read", Effect.ALLOW),
         Rule("demo-supplier-scope-required", principal.id, "suppliers",
              "update_bank_account", "supplier/482", "supplier:write",
              Effect.REQUIRE_APPROVAL),
-    ])
+    )
 
+
+def _rules(principal: Principal) -> PolicyEngine:
+    return PolicyEngine(demo_rule_records(principal))
 
 def _event_id() -> str:
     return "demo-event-" + secrets.token_hex(16)
