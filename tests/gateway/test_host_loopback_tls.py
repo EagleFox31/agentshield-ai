@@ -110,6 +110,19 @@ class LoopbackTLSProbeTests(unittest.TestCase):
             .sign(ca_key, hashes.SHA256())
         )
         cls.ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+        alien_key = ec.generate_private_key(ec.SECP256R1())
+        alien_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Untrusted test CA")])
+        alien_cert = (
+            x509.CertificateBuilder()
+            .subject_name(alien_name).issuer_name(alien_name)
+            .public_key(alien_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - dt.timedelta(days=1))
+            .not_valid_after(now + dt.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(alien_key, hashes.SHA256())
+        )
+        cls.other_ca_pem = alien_cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
         cls.good = cls._leaf(ca_name, ca_key, now, HOST, "good")
         cls.wrong = cls._leaf(ca_name, ca_key, now, "other.invoices.example", "wrong")
 
@@ -179,7 +192,7 @@ class LoopbackTLSProbeTests(unittest.TestCase):
     def test_untrusted_ca_rejected_even_with_matching_hostname(self):
         with _LocalTLSServer(*self.good, _response()) as server:
             with self.assertRaises(EgressRejected):
-                self.probe(server.port, ca="-----BEGIN CERTIFICATE-----\nbad\n-----END CERTIFICATE-----")
+                self.probe(server.port, ca=self.other_ca_pem)
 
     def test_missing_invoice_scope_and_changed_action_refused_before_connection(self):
         actor = Principal(self.actor.id, frozenset())
