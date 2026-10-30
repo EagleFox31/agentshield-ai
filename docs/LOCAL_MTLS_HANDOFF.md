@@ -67,3 +67,7 @@ retry, replacement token, re-dispatch, or provider side effect is safe.
 No public API, remote D1, live credentials, cloud deployment or blockchain
 transactions. Keep **issue #3 OPEN** until the end-to-end *production*
 execution boundary is independently reviewed and proven.
+
+## Separate process boundary (PR #56 candidate)
+
+The same reviewed local mTLS send/receive functions now run in **two OS subprocesses**, with distinct PIDs and a file-backed host replay database that survives server restarts. Source signing and audit remain local D1-compatible test fixtures. The caller passes the signed proof through stdin (never argv) and both CLI roles require explicit test-only opt-in. See [host process isolation and limitations](LOCAL_HOST_PROCESS_ISOLATION.md). **No deployed Cloudflare Worker-to-host service, remote D1 verification, external execution or blockchain write.**

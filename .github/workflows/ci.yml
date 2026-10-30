@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
       - '.github/dependabot.yml'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
       - '.github/dependabot.yml'
@@ -35,7 +37,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Verify Python syntax
-        run: python -m compileall -q src tests
+        run: python -m compileall -q src tests scripts/local_handoff_process.py
       - name: Run security decisions regression tests (no runtime dependencies)
         env:
           PYTHONPATH: src
