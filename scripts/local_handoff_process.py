@@ -8,13 +8,13 @@ tokens arrive on STDIN only, never as argv, environment or file content.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 import os
 from pathlib import Path
 import socket
 import sqlite3
 import sys
-import time
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -58,7 +58,7 @@ def _receive(args: argparse.Namespace) -> None:
     pubkey = serialization.load_pem_public_key(args.issuer_public_key.read_bytes())
     if not isinstance(pubkey, ec.EllipticCurvePublicKey):
         raise ValueError("Unexpected public key family")
-    with sqlite3.connect(str(args.replay_db), timeout=1.0, isolation_level=None) as db:
+    with closing(sqlite3.connect(str(args.replay_db), timeout=1.0, isolation_level=None)) as db:
         # SQLite's full sync is required for the local crash/restart regression.
         db.execute("PRAGMA synchronous=FULL")
         init_host_replay_db(db)
