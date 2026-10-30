@@ -36,3 +36,7 @@ This prototype uses the already existing D1-compatible SQL/SQLite ports to prove
 
 This feature's first Worker CI failed **closed** when the platform started providing Pydantic 2.14.2/Core 2.50.2 instead of its reviewed earlier versions. The separately reviewed [security provenance PR #53](https://github.com/EagleFox31/agentshield-ai/pull/53) updated the local Worker observation after checking Pydantic's official 29 October 2026 security patch; the full Worker/D1 smoke and deliberate drift-failure checks passed before PR #53 was merged into `main`. Revalidate **this feature** against the updated base before merging. The ES256 host-only test signer remains explicitly separate from the Cloudflare Python Worker and its dependencies.
  The existing Merkle proof demonstration stays **off-chain**.
+
+## Local mutual-TLS transport — PR #55 candidate
+
+An independently documented **local-only** host mTLS channel now conveys the already issued token over real loopback TCP/TLS 1.3 and obtains an ACK **only after** an isolated host-side SQLite burn. The client validates the server hostname/CA, while the receiving server requires a pinned mTLS client certificate and a separately pinned ES256 handoff issuer key. No tools are executed, no remote D1 is read, and a lost ACK is still ambiguous. See [local mTLS security contract](LOCAL_MTLS_HANDOFF.md). This does **not** connect a deployed Worker to a real executor; all production limitations above remain valid.
