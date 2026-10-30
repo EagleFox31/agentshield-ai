@@ -22,12 +22,12 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
 from agentshield.approvals import ApprovalStore
-from agentshield.audit import AuditRepository, AuditStorageError, action_digest
+from agentshield.audit import AuditRepository, AuditStorageError, action_digest, event_arguments
 from agentshield.demo_invoice import INVOICE
 from agentshield.egress_policy import EgressRejected
 from agentshield.idempotent_decisions import _fingerprint
 from agentshield.identity import VerifiedAgent
-from agentshield.local_command_outbox import _ACTIVE, _FIND, _verify_audit
+from agentshield.local_command_outbox import _ACTIVE, _FIND, _verify_audit, _audit_event
 from agentshield.policy import Effect
 from agentshield.policy_registry import SQLitePolicyRegistry, D1PolicyRegistry
 
@@ -52,6 +52,52 @@ _DECISION = (
     "request_sha256,effect,expires_at_ms FROM decision_requests "
     "WHERE tenant_id=? AND request_id=?"
 )
+# Persist only hashes; neither token nor private signing key belongs in D1.
+# The active generation and decision are checked again *inside* the insert,
+# preventing a stale-policy race from leaving an issuance record.
+_ISSUE = (
+    "INSERT INTO local_handoff_issuances "
+    "(tenant_id,command_id,issuance_id,principal_id,dispatch_id,"
+    "dispatch_audit_event_id,policy_version,policy_sha256,action_digest,"
+    "jti_sha256,token_sha256,issued_at_ms,expires_at_ms,audit_event_id) "
+    "SELECT c.tenant_id,c.command_id,?,c.principal_id,r.dispatch_id,"
+    "r.dispatch_audit_event_id,c.policy_version,c.policy_sha256,"
+    "c.action_digest,?,?,?,?,? "
+    "FROM local_command_outbox c "
+    "JOIN local_mock_dispatch_reservations r "
+    "ON r.tenant_id=c.tenant_id AND r.command_id=c.command_id "
+    "JOIN decision_requests d "
+    "ON d.tenant_id=c.tenant_id AND d.request_id=c.request_id "
+    "JOIN active_policy_versions a ON a.tenant_id=c.tenant_id "
+    "WHERE c.tenant_id=? AND c.command_id=? AND c.state='claimed' "
+    "AND c.principal_id=? AND r.principal_id=c.principal_id "
+    "AND r.dispatch_id=? AND r.dispatch_audit_event_id=? "
+    "AND r.decision_sha256=? "
+    "AND d.event_id=c.decision_event_id AND d.effect='allow' "
+    "AND d.request_sha256=r.decision_sha256 "
+    "AND d.policy_version=c.policy_version AND d.policy_sha256=c.policy_sha256 "
+    "AND d.expires_at_ms>? "
+    "AND a.version=c.policy_version "
+    "AND a.activated_at_ms=c.active_at_ms "
+    "AND COALESCE(a.activation_marker,'')=c.active_marker "
+    "ON CONFLICT(tenant_id,command_id) DO NOTHING"
+)
+_ISSUE_AUDIT = (
+    "INSERT INTO audit_events "
+    "(event_id,tenant_id,principal_id,action_digest,effect,reason_codes_json,"
+    "policy_version,occurred_at_ms,retention_until_ms,event_sha256) "
+    "SELECT ?,?,?,?,?,?,?,?,?,? WHERE EXISTS("
+    "SELECT 1 FROM local_handoff_issuances "
+    "WHERE tenant_id=? AND command_id=? AND issuance_id=? "
+    "AND audit_event_id=?)"
+)
+_ISSUE_ROW = (
+    "SELECT issuance_id,principal_id,dispatch_id,dispatch_audit_event_id,"
+    "policy_version,policy_sha256,action_digest,jti_sha256,"
+    "token_sha256,audit_event_id FROM local_handoff_issuances "
+    "WHERE tenant_id=? AND command_id=?"
+)
+
 
 
 class HandoffRejected(ValueError):
@@ -188,7 +234,51 @@ async def issue_offline_handoff(
     raw = _canonical(data)
     der = private_key.sign(raw, ec.ECDSA(hashes.SHA256()))
     r, s = utils.decode_dss_signature(der)
-    return _encode(raw) + "." + _encode(r.to_bytes(32, "big") + s.to_bytes(32, "big"))
+    token = _encode(raw) + "." + _encode(
+        r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    )
+    token_digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    issuance_id = "handoff-issuance-" + secrets.token_hex(16)
+    audit_id = "handoff-issued-" + secrets.token_hex(16)
+    evidence = _audit_event(
+        audit_id, agent.tenant_id, agent.principal.id, digest,
+        active.version, "LOCAL_SIGNED_HANDOFF_ISSUED_NO_EXECUTION", now_ms,
+    )
+    # One database transaction: D1/SQLite records this handoff + its audit.
+    # A duplicated command cannot mint a second usable token; if a signed
+    # response is lost after commit, the command is intentionally exhausted.
+    await store.atomic([
+        (_ISSUE, (
+            issuance_id,
+            hashlib.sha256(data["jti"].encode("ascii")).hexdigest(),
+            token_digest, now_ms, now_ms + _LIFETIME_MS, audit_id,
+            agent.tenant_id, command_id, agent.principal.id,
+            reservation["dispatch_id"], reservation["dispatch_audit_event_id"],
+            expected, now_ms,
+        )),
+        (_ISSUE_AUDIT, event_arguments(evidence) + (
+            agent.tenant_id, command_id, issuance_id, audit_id,
+        )),
+    ])
+    saved = await store.first(_ISSUE_ROW, (agent.tenant_id, command_id))
+    if (saved is None or saved["issuance_id"] != issuance_id
+        or saved["token_sha256"] != token_digest
+        or saved["jti_sha256"] != hashlib.sha256(
+            data["jti"].encode("ascii")
+        ).hexdigest()
+        or saved["principal_id"] != agent.principal.id
+        or saved["dispatch_id"] != reservation["dispatch_id"]
+        or saved["dispatch_audit_event_id"] != reservation["dispatch_audit_event_id"]
+        or saved["policy_version"] != active.version
+        or saved["policy_sha256"] != active.sha256
+        or saved["action_digest"] != digest
+        or saved["audit_event_id"] != audit_id):
+        raise HandoffRejected("Handoff already issued or issuance evidence changed")
+    await _verify_audit(
+        audit, agent.tenant_id, audit_id, agent.principal.id,
+        digest, active.version, "LOCAL_SIGNED_HANDOFF_ISSUED_NO_EXECUTION",
+    )
+    return token
 
 
 def init_host_replay_db(conn: sqlite3.Connection) -> None:
