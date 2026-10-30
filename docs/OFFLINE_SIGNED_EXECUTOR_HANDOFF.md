@@ -20,4 +20,9 @@ Host integration tests construct the complete signed-agent → versioned policy 
 
 **Important:** source data is currently read from a local SQLite-compatible fixture, **not a cryptographically signed live D1 export**. The issuer's P-256 signing key is generated in the host test only, not backed by KMS; the verifier runs as an in-process test, not a separately deployed service. Real enforcement would require independent issuer authentication to D1, strictly controlled signer/key rotation, signed tenant ownership, an atomic handoff issuance record in D1, mTLS/service-to-service transport or equivalent, destination/IP/TLS enforcement at the production proxy, provider idempotency and reconciliation of ambiguous side effects. A signed token alone does not make external execution safe or exactly-once.
 
-Keep all live connections disabled; no public `/v1` execution endpoint is added. Issue #3 remains open. The existing Merkle proof demonstration stays **off-chain**.
+Keep all live connections disabled; no public `/v1` execution endpoint is added. Issue #3 remains open.
+
+## Upstream runtime drift gate
+
+This feature's first Worker CI failed **closed** when the platform started providing Pydantic 2.14.2/Core 2.50.2 instead of its reviewed earlier versions. The separately reviewed [security provenance PR #53](https://github.com/EagleFox31/agentshield-ai/pull/53) updated the local Worker observation after checking Pydantic's official 29 October 2026 security patch; the full Worker/D1 smoke and deliberate drift-failure checks passed before PR #53 was merged into `main`. Revalidate **this feature** against the updated base before merging. The ES256 host-only test signer remains explicitly separate from the Cloudflare Python Worker and its dependencies.
+ The existing Merkle proof demonstration stays **off-chain**.
