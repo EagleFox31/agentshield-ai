@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import sqlite3
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -206,6 +207,37 @@ class SignedHandoffTests(unittest.TestCase):
         ))
         with self.assertRaises(HandoffRejected):
             self.issue(queued.command_id)
+
+    def test_consumed_token_survives_host_database_restart(self):
+        command_id = self.prepare()
+        token = self.issue(command_id)
+        with tempfile.TemporaryDirectory(prefix="agentshield-handoff-") as folder:
+            database = str(Path(folder) / "executor-replay.sqlite")
+            first = sqlite3.connect(database, isolation_level=None)
+            try:
+                init_host_replay_db(first)
+                consumed = verify_and_burn_local_handoff(
+                    first, token, self.key.public_key(), now_ms=NOW + 5,
+                    expected_tenant="ci_local", expected_command_id=command_id,
+                )
+                self.assertEqual(consumed.command_id, command_id)
+            finally:
+                first.close()
+            reopened = sqlite3.connect(database, isolation_level=None)
+            try:
+                init_host_replay_db(reopened)
+                with self.assertRaises(HandoffRejected):
+                    verify_and_burn_local_handoff(
+                        reopened, token, self.key.public_key(), now_ms=NOW + 6,
+                        expected_tenant="ci_local", expected_command_id=command_id,
+                    )
+                self.assertEqual(
+                    reopened.execute(
+                        "SELECT COUNT(*) FROM used_local_handoffs"
+                    ).fetchone()[0], 1,
+                )
+            finally:
+                reopened.close()
 
     def test_durable_replay_failure_never_grants_access(self):
         cmd = self.prepare()
