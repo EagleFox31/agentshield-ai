@@ -135,6 +135,45 @@ class SignedHandoffTests(unittest.TestCase):
         with self.assertRaises(HandoffRejected):
             self.verify(first, cmd)
 
+    def test_source_stores_only_token_digest_never_raw_token(self):
+        import hashlib
+        cmd = self.prepare()
+        token = self.issue(cmd)
+        saved = self.db.execute(
+            "SELECT token_sha256,jti_sha256,issued_at_ms,expires_at_ms "
+            "FROM local_handoff_issuances WHERE command_id=?", (cmd,),
+        ).fetchone()
+        self.assertEqual(
+            saved["token_sha256"],
+            hashlib.sha256(token.encode("ascii")).hexdigest(),
+        )
+        self.assertNotEqual(saved["token_sha256"], token)
+        self.assertEqual(len(saved["jti_sha256"]), 64)
+        self.assertEqual(saved["expires_at_ms"] - saved["issued_at_ms"], 30_000)
+
+    def test_active_policy_drift_inside_issuance_transaction_fails_closed(self):
+        cmd = self.prepare()
+        class RacingStore(SQLiteApprovalStore):
+            async def atomic(self, statements):
+                self.db.execute(
+                    "UPDATE active_policy_versions SET activated_at_ms=?,"
+                    "activation_marker=? WHERE tenant_id=?",
+                    (NOW + 12, "raced-activation", "ci_local"),
+                )
+                await super().atomic(statements)
+        with self.assertRaises(HandoffRejected):
+            run(issue_offline_handoff(
+                RacingStore(self.db), self.audit, self.registry, self.agent,
+                command_id=cmd, now_ms=NOW + 3, private_key=self.key,
+            ))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM local_handoff_issuances"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE reason_codes_json='[\"LOCAL_SIGNED_HANDOFF_ISSUED_NO_EXECUTION\"]'"
+        ).fetchone()[0], 0)
+
     def test_audit_failure_rolls_back_source_issuance(self):
         cmd = self.prepare()
         self.db.execute(
