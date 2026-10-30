@@ -24,6 +24,7 @@ on:
       - 'src/agentshield/bound_transport_contract.py'
       - 'src/agentshield/host_loopback_tls.py'
       - 'src/agentshield/host_signed_handoff.py'
+      - 'src/agentshield/host_mtls_handoff.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
