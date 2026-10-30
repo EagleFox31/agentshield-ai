@@ -17,7 +17,7 @@ import unittest
 
 from cryptography.hazmat.primitives import serialization
 
-from test_host_mtls_handoff import LocalMTLSHandoffTests
+import test_host_mtls_handoff as mtls_fixture
 from test_host_signed_handoff import NOW
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +28,7 @@ class ProcessIsolationHandoffTests(unittest.TestCase):
     def setUp(self):
         # Reuse the genuine prior signed decision, audited source issuance
         # and ephemeral CA/certificate fixtures; no second policy engine.
-        self.fixture = LocalMTLSHandoffTests(
+        self.fixture = mtls_fixture.LocalMTLSHandoffTests(
             "test_authenticated_loopback_delivery_burns_once_after_source_audit"
         )
         self.fixture.setUp()
