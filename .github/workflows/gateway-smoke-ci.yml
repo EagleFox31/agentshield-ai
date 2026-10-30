@@ -148,6 +148,7 @@ jobs:
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0007_tenant_decision_quota.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0008_local_command_outbox.sql
           ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0009_fenced_mock_dispatch.sql
+          ./node_modules/.bin/wrangler d1 execute agentshield-local-only --local --file=migrations/0010_local_handoff_issuance.sql
           # Publish an INACTIVE reviewed V2 with identical rules, so old
           # approvals must be invalidated solely by the version transition.
           uv run --locked --group worker python scripts/seed_local_policy_registry.py --include-v2 --output /tmp/agentshield-ci-policy.sql

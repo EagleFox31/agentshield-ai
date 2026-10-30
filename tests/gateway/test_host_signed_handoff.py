@@ -48,6 +48,7 @@ class SignedHandoffTests(unittest.TestCase):
             "0005_policy_activation_audit.sql", "0006_idempotent_decisions.sql",
             "0007_tenant_decision_quota.sql", "0008_local_command_outbox.sql",
             "0009_fenced_mock_dispatch.sql",
+            "0010_local_handoff_issuance.sql",
         ):
             self.db.executescript((ROOT / "migrations" / name).read_text())
         self.db.executescript(make_sql() + reviewed_v2_sql())
@@ -118,15 +119,95 @@ class SignedHandoffTests(unittest.TestCase):
             self.verify(token, cmd)
         self.assertEqual(self.adapter.calls, ["mock_invoice_read"])
 
-    def test_second_distinct_signed_jti_still_cannot_run_same_command(self):
+    def test_source_issues_at_most_one_handoff_per_command(self):
         cmd = self.prepare()
-        first, second = self.issue(cmd), self.issue(cmd)
-        self.assertNotEqual(first, second)
+        first = self.issue(cmd)
+        with self.assertRaises(HandoffRejected):
+            self.issue(cmd)
+        self.assertEqual(self.db.execute(
+            "SELECT count(*) FROM local_handoff_issuances"
+        ).fetchone()[0], 1)
+        self.assertEqual(self.db.execute(
+            "SELECT count(*) FROM audit_events "
+            "WHERE reason_codes_json='[\"LOCAL_SIGNED_HANDOFF_ISSUED_NO_EXECUTION\"]'"
+        ).fetchone()[0], 1)
         self.verify(first, cmd)
         with self.assertRaises(HandoffRejected):
-            self.verify(second, cmd)
-        self.assertEqual(self.host.execute(
-            "SELECT COUNT(*) FROM used_local_handoffs"
+            self.verify(first, cmd)
+
+    def test_source_stores_only_token_digest_never_raw_token(self):
+        import hashlib
+        cmd = self.prepare()
+        token = self.issue(cmd)
+        saved = self.db.execute(
+            "SELECT token_sha256,jti_sha256,issued_at_ms,expires_at_ms "
+            "FROM local_handoff_issuances WHERE command_id=?", (cmd,),
+        ).fetchone()
+        self.assertEqual(
+            saved["token_sha256"],
+            hashlib.sha256(token.encode("ascii")).hexdigest(),
+        )
+        self.assertNotEqual(saved["token_sha256"], token)
+        self.assertEqual(len(saved["jti_sha256"]), 64)
+        self.assertEqual(saved["expires_at_ms"] - saved["issued_at_ms"], 30_000)
+
+    def test_active_policy_drift_inside_issuance_transaction_fails_closed(self):
+        cmd = self.prepare()
+        class RacingStore(SQLiteApprovalStore):
+            async def atomic(self, statements):
+                self.db.execute(
+                    "UPDATE active_policy_versions SET activated_at_ms=?,"
+                    "activation_marker=? WHERE tenant_id=?",
+                    (NOW + 12, "raced-activation", "ci_local"),
+                )
+                await super().atomic(statements)
+        with self.assertRaises(HandoffRejected):
+            run(issue_offline_handoff(
+                RacingStore(self.db), self.audit, self.registry, self.agent,
+                command_id=cmd, now_ms=NOW + 3, private_key=self.key,
+            ))
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM local_handoff_issuances"
+        ).fetchone()[0], 0)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE reason_codes_json='[\"LOCAL_SIGNED_HANDOFF_ISSUED_NO_EXECUTION\"]'"
+        ).fetchone()[0], 0)
+
+    def test_audit_failure_rolls_back_source_issuance(self):
+        cmd = self.prepare()
+        self.db.execute(
+            "CREATE TRIGGER fail_handoff_audit BEFORE INSERT ON audit_events "
+            "WHEN NEW.event_id LIKE 'handoff-issued-%' "
+            "BEGIN SELECT RAISE(ABORT,'synthetic audit failure'); END"
+        )
+        with self.assertRaises(AuditStorageError):
+            self.issue(cmd)
+        self.assertEqual(self.db.execute(
+            "SELECT count(*) FROM local_handoff_issuances"
+        ).fetchone()[0], 0)
+
+    def test_immutable_source_issuance_cannot_be_updated_or_deleted(self):
+        cmd = self.prepare()
+        token = self.issue(cmd)
+        for query in (
+            "DELETE FROM local_handoff_issuances",
+            "UPDATE local_handoff_issuances SET tenant_id='other'",
+            "UPDATE local_handoff_issuances SET token_sha256='0'",
+        ):
+            with self.subTest(query=query), self.assertRaises(sqlite3.DatabaseError):
+                self.db.execute(query)
+        self.verify(token, cmd)
+
+    def test_lost_response_after_source_commit_is_fail_closed(self):
+        cmd = self.prepare()
+        _ = self.issue(cmd)
+        # Even if HTTP response carrying the signed token were lost, a
+        # second issuance must not silently reset the 30-second window.
+        with self.assertRaises(HandoffRejected):
+            self.issue(cmd, at=NOW + 4)
+        self.assertEqual(self.db.execute(
+            "SELECT COUNT(*) FROM local_handoff_issuances"
         ).fetchone()[0], 1)
 
     def test_untrusted_key_and_modified_signature_or_payload_denied(self):
