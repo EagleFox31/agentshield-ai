@@ -12,6 +12,19 @@
 - [`docs/WORKER_RUNTIME_BASELINE.json`](WORKER_RUNTIME_BASELINE.json) holds the reviewed version observations; `scripts/check_worker_provenance.py` compares them against a live Worker probe, `wrangler.jsonc`, locked npm metadata and `pyproject.toml` required deps. A synthetic mismatched Pyodide version must make the CI step fail.
 - GitHub Actions retains the non-sensitive `local-worker-runtime-provenance` evidence artifact for 14 days. Actual JWT, approval, D1 and invoice-denial integration tests must remain green on the **same** commit.
 
+## Reviewed runtime drift checkpoint — 30 October 2026
+
+**Why this review exists:** the strict provenance gate deliberately blocked [Worker/D1 run 41035310437](https://github.com/EagleFox31/agentshield-ai/actions/runs/41035310437). The actual authenticated local Worker reported **Pydantic 2.14.2 / Pydantic Core 2.50.2**, while the previously reviewed baseline still expected 2.14.1 / 2.50.1. The same observation reported unchanged **Python 3.14.2, Pyodide 314.0.6, FastAPI 0.139.2 and Starlette 1.3.1**, with `local_only:true`, `enforcement_ready:false` and `real_tool_called:false`. The failure occurred **before** subsequent Worker/D1 integration tests; it was not evidence those scenarios passed.
+
+### Independent release check and decision
+
+- [Upstream Pydantic v2.14.2 release](https://github.com/pydantic/pydantic/releases/tag/v2.14.2), published **29 October 2026**, explicitly addresses the security advisories `GHSA-qpmf-fgh3-ff25` and `GHSA-3r8g-cqwr-jr29`. This is a patch release in the **same 2.14 family**, not a major feature upgrade.
+- The paired **Pydantic Core 2.50.2** value comes from the **actual Worker runtime observation**; do not treat it as a separate cryptographic attestation or assume Cloudflare will freeze it. Cloudflare [Python Worker packages documentation](https://developers.cloudflare.com/workers/languages/python/packages/) states that dependencies are bundled into the Worker environment and support varies by runtime.
+- Reviewed `wrangler.jsonc`, `package.json`, `package-lock.json`, `pyproject.toml` dependency declarations and `check_worker_provenance.py` **remain unchanged**. The Worker keeps `python_workers`, the same compatibility date, local-only synthetic D1, pinned npm toolchain and fail-closed equality checks. We change **only** the observed Pydantic/Pydantic-Core values and the provenance reference.
+- **Acceptance requirement:** a **separate PR** with all native Worker/Pyodide+D1 signed-JWT, human approval, policy, audit, replay and no-external-tool negative tests green on the *new observed versions*, alongside Python static/security checks, Gitleaks and README. Do not merge this baseline update or dependent security features until these tests finish. A future drift remains a hard failure.
+
+This updates a **locally reviewed observation**, not an independent supply-chain attestation, vendor image lock or deployment approval. No runtime guard or security test has been disabled or waived.
+
 ## How to reproduce locally (no deployment)
 
 From a clean checkout with Node.js 22, Python 3.13, `uv==0.12.3`, and npm installed:
