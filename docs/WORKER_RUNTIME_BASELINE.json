@@ -1,15 +1,17 @@
 {
   "compatibility_date": "2026-10-26",
-  "compatibility_flags": ["python_workers"],
+  "compatibility_flags": [
+    "python_workers"
+  ],
   "wrangler_version": "4.154.0",
   "python_version": "3.14.2",
   "pyodide_version": "314.0.6",
   "packages": {
     "fastapi": "0.139.2",
     "starlette": "1.3.1",
-    "pydantic": "2.14.1",
-    "pydantic_core": "2.50.1"
+    "pydantic": "2.14.2",
+    "pydantic_core": "2.50.2"
   },
-  "source": "observed locally in GitHub Actions run 40649796186, 28 Oct 2026",
+  "source": "observed in local Worker/Pyodide CI run 41035310437 on 30 Oct 2026; compared with official Pydantic 2.14.2 security release notes (29 Oct 2026)",
   "scope": "local Worker/Pyodide smoke, not a Cloudflare production runtime freeze"
 }
