@@ -859,8 +859,8 @@ jobs:
           # The source has a synthetic dispatch reservation but NO issued
           # host handoff token; read-only evidence must not invent one.
           service_evidence_url="http://127.0.0.1:8787/_local/commands/$command_id/service-evidence"
-          curl --fail --silent --show-error \\
-            -H "Authorization: Bearer $(cat .local-jwt/service_evidence.txt)" \\
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $(cat .local-jwt/service_evidence.txt)" \
             "$service_evidence_url" > /tmp/host-service-evidence.json
           python - <<'PY_SERVICE_EVIDENCE'
           import json
@@ -876,31 +876,31 @@ jobs:
           assert not d["execution_authorized"] and not d["production_ready"]
           PY_SERVICE_EVIDENCE
           for fixture in valid operator_valid service_wrong_signer; do
-            status=$(curl --silent -o /dev/null -w '%{http_code}' \\
-              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \\
+            status=$(curl --silent -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $(cat ".local-jwt/$fixture.txt")" \
               "$service_evidence_url")
             test "$status" = 401
           done
-          status=$(curl --silent -o /dev/null -w '%{http_code}' \\
-            -H "Authorization: Bearer $(cat .local-jwt/service_no_scope.txt)" \\
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/service_no_scope.txt)" \
             "$service_evidence_url")
           test "$status" = 403
-          status=$(curl --silent -o /dev/null -w '%{http_code}' \\
-            -H "Authorization: Bearer $(cat .local-jwt/service_other_tenant.txt)" \\
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/service_other_tenant.txt)" \
             "$service_evidence_url")
           test "$status" = 404
-          status=$(curl --silent -o /dev/null -w '%{http_code}' \\
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
             "$service_evidence_url")
           test "$status" = 401
-          status=$(curl --silent -o /dev/null -w '%{http_code}' \\
-            -H "Authorization: Bearer $(cat .local-jwt/service_evidence.txt)" \\
+          status=$(curl --silent -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(cat .local-jwt/service_evidence.txt)" \
             "http://127.0.0.1:8787/v1/commands/$command_id/service-evidence")
           test "$status" = 404
           # Actual separate host CPython process reads the Worker/D1 evidence
           # through a fixed loopback client. Response remains UNATTESTED as
           # server origin (HTTP), and cannot authorize a second mock action.
-          uv run --locked --group worker python scripts/probe_local_worker_evidence.py \\
-            --port 8787 --tenant ci_local --command-id "$command_id" \\
+          uv run --locked --group worker python scripts/probe_local_worker_evidence.py \
+            --port 8787 --tenant ci_local --command-id "$command_id" \
             < .local-jwt/service_evidence.txt > /tmp/local-host-probe.json
           python - <<'PY_LOCAL_HOST'
           import json
