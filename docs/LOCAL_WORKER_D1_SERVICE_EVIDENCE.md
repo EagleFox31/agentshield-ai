@@ -76,3 +76,7 @@ recoverable failure semantics. Continue to fail closed on lost delivery:
 no reissue or redispatch without manual reconciliation.
 
 **Issues #2 and #3 remain OPEN.**
+
+## Follow-up: fresh source-origin attestation
+
+The next local-only increment signs the audited Worker/D1 response with an ephemeral native WebCrypto ES256 test key and checks its exact, fresh challenge with a separately pinned host key. This upgrades the local diagnostic from unsigned HTTP metadata, but **does not create a production deployment, authorize any tool, or attest Cloudflare's platform identity**. See [local Worker evidence attestation](LOCAL_WORKER_EVIDENCE_ATTESTATION.md).
