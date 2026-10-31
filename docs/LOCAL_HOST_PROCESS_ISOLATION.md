@@ -60,3 +60,7 @@ The next production-design gate is **authenticated Worker-to-host evidence
 retrieval** with tenant-scoped, immutable remote D1 binding and keys managed
 outside tests, followed by a separately reviewed constrained egress boundary,
 provider idempotency and crash recovery. Keep issue #3 open.
+
+## Local Worker/D1 SERVICE read-only probe (next P0 increment)
+
+The subsequent checkpoint adds a separately signed service JWT for an actual **local** Pyodide/Worker/D1 reconciliation read, plus an independent host CPython loopback client. This exposes only redacted, audit-verified lineage and **never authenticates the Worker response as a source of execution authority**. See [Worker/D1 host evidence contract](LOCAL_WORKER_D1_SERVICE_EVIDENCE.md). No deployed D1, remote issuer or provider use.
