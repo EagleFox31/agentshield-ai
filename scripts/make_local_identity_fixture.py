@@ -182,7 +182,7 @@ def main() -> None:
         f'SERVICE_JWT_ISSUER="{service_issuer}"\n'
         f'SERVICE_JWT_AUDIENCE="{service_audience}"\n'
         f"SERVICE_JWKS_JSON='{service_jwks}'\n"
-        f"LOCAL_WORKER_ATTEST_PRIVATE_JWK='{worker_attestor_jwk}'\\n",
+        f"LOCAL_WORKER_ATTEST_PRIVATE_JWK='{worker_attestor_jwk}'\n",
         encoding="utf-8",
     )
     print("Prepared ephemeral ES256 fixtures and local-only public JWK configuration.")
