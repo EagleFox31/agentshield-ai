@@ -6,6 +6,7 @@ redirects, token logging, persistence, issuance, provider call or dispatch.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import http.client
 import json
 import re
@@ -24,7 +25,7 @@ def local_probe(*, port: int, tenant: str, command: str, bearer: str) -> dict:
         or not bearer.isascii() or bearer.count(".") != 2):
         raise ValueError("Invalid local service probe input")
     # HTTP is UNATTESTED. Only tests use this loopback diagnostic boundary.
-    with http.client.HTTPConnection("127.0.0.1", port=port, timeout=2.0) as conn:
+    with closing(http.client.HTTPConnection("127.0.0.1", port=port, timeout=2.0)) as conn:
         conn.request(
             "GET", f"/_local/commands/{command}/service-evidence",
             headers={
