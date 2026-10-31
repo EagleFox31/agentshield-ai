@@ -118,10 +118,42 @@ def main() -> None:
         headers={"kid": "ci-operator-key-1"},
     )
 
+    # Independent ephemeral service issuer: no agent or operator credential is trusted.
+    service_signer = ec.generate_private_key(ec.SECP256R1())
+    service_coords = service_signer.public_key().public_numbers()
+    service_jwk = {
+        **public_jwk, "kid": "ci-host-service-key-1",
+        "x": b64u(service_coords.x), "y": b64u(service_coords.y),
+    }
+    service_issuer = "https://services.test.example"
+    service_audience = "urn:agentshield:host-evidence"
+    service_claims = {
+        **claims, "iss": service_issuer, "aud": service_audience,
+        "sub": "local-host-reconciler", "scope": "handoff:evidence:read",
+        "jti": "service-evidence-ci-token-123",
+    }
+    tokens["service_evidence"] = jwt.encode(
+        service_claims, service_signer, algorithm="ES256",
+        headers={"kid": "ci-host-service-key-1"},
+    )
+    tokens["service_no_scope"] = jwt.encode(
+        {**service_claims, "scope": "invoice:read", "jti": "service-no-scope-123"},
+        service_signer, algorithm="ES256", headers={"kid": "ci-host-service-key-1"},
+    )
+    tokens["service_other_tenant"] = jwt.encode(
+        {**service_claims, "tenant_id": "other_tenant", "jti": "service-other-tenant-123"},
+        service_signer, algorithm="ES256", headers={"kid": "ci-host-service-key-1"},
+    )
+    tokens["service_wrong_signer"] = jwt.encode(
+        service_claims, signer, algorithm="ES256",
+        headers={"kid": "ci-host-service-key-1"},
+    )
+
     for name, token in tokens.items():
         (OUTPUT / f"{name}.txt").write_text(token, encoding="utf-8")
     jwks = json.dumps({"keys": [public_jwk, rotated_public_jwk]}, separators=(",", ":"))
     operator_jwks = json.dumps({"keys": [operator_public_jwk]}, separators=(",", ":"))
+    service_jwks = json.dumps({"keys": [service_jwk]}, separators=(",", ":"))
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"
         f'AGENT_JWT_ISSUER="{ISSUER}"\n'
@@ -129,7 +161,10 @@ def main() -> None:
         f"AGENT_JWKS_JSON='{jwks}'\n"
         f'OPERATOR_JWT_ISSUER="{operator_issuer}"\n'
         f'OPERATOR_JWT_AUDIENCE="{operator_audience}"\n'
-        f"OPERATOR_JWKS_JSON='{operator_jwks}'\n",
+        f"OPERATOR_JWKS_JSON='{operator_jwks}'\n"
+        f'SERVICE_JWT_ISSUER="{service_issuer}"\n'
+        f'SERVICE_JWT_AUDIENCE="{service_audience}"\n'
+        f"SERVICE_JWKS_JSON='{service_jwks}'\n",
         encoding="utf-8",
     )
     print("Prepared ephemeral ES256 fixtures and local-only public JWK configuration.")

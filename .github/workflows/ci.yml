@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/probe_local_worker_evidence.py'
       - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'scripts/probe_local_worker_evidence.py'
       - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
       - '.github/workflows/ci.yml'
@@ -37,7 +39,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Verify Python syntax
-        run: python -m compileall -q src tests scripts/local_handoff_process.py
+        run: python -m compileall -q src tests scripts/local_handoff_process.py scripts/probe_local_worker_evidence.py
       - name: Run security decisions regression tests (no runtime dependencies)
         env:
           PYTHONPATH: src
