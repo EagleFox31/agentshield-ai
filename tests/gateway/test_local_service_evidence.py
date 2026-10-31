@@ -114,9 +114,14 @@ class LocalServiceEvidenceTests(unittest.TestCase):
         )
 
     def http(self, *, local=True, sub="local-host-reconciler", storage=True):
+        # Starlette TestClient serves ASGI in another thread. Clone the
+        # SQLite evidence into a separate thread-capable, read-only test fixture.
+        # The production D1 adapter has no such CPython thread constraint.
+        http_db = sqlite3.connect(":memory:", check_same_thread=False)
+        self.fx.db.backup(http_db)
         env = SimpleNamespace(
             LOCAL_SMOKE_ENABLED="true" if local else "false",
-            DB=self.fx.db if storage else None,
+            DB=http_db if storage else None,
         )
 
         async def service_identity(_request, _kind, _scope):
@@ -131,10 +136,13 @@ class LocalServiceEvidenceTests(unittest.TestCase):
         with patch("agentshield.gateway._verified_local_identity", service_identity):
             with patch("agentshield.gateway.D1ApprovalStore", store_or_fail):
                 with patch("agentshield.gateway.D1AuditRepository", SQLiteAuditRepository):
-                    with TestClient(LocalEnv(env)) as client:
-                        return client.get(
-                            f"/_local/commands/{self.command}/service-evidence"
-                        )
+                    try:
+                        with TestClient(LocalEnv(env)) as client:
+                            return client.get(
+                                f"/_local/commands/{self.command}/service-evidence"
+                            )
+                    finally:
+                        http_db.close()
 
     def test_http_is_service_only_and_always_returns_non_authorizing_response(self):
         response = self.http()
