@@ -123,8 +123,13 @@ class LocalServiceEvidenceTests(unittest.TestCase):
             self.assertEqual((_kind, _scope), ("SERVICE", "handoff:evidence:read"))
             return self.service(sub=sub)
 
+        def store_or_fail(db):
+            if db is None:
+                raise AuditStorageError("Local DB binding missing")
+            return SQLiteApprovalStore(db)
+
         with patch("agentshield.gateway._verified_local_identity", service_identity):
-            with patch("agentshield.gateway.D1ApprovalStore", SQLiteApprovalStore):
+            with patch("agentshield.gateway.D1ApprovalStore", store_or_fail):
                 with patch("agentshield.gateway.D1AuditRepository", SQLiteAuditRepository):
                     with TestClient(LocalEnv(env)) as client:
                         return client.get(
