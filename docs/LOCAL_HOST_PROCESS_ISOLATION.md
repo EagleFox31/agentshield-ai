@@ -64,3 +64,7 @@ provider idempotency and crash recovery. Keep issue #3 open.
 ## Local Worker/D1 SERVICE read-only probe (next P0 increment)
 
 The subsequent checkpoint adds a separately signed service JWT for an actual **local** Pyodide/Worker/D1 reconciliation read, plus an independent host CPython loopback client. This exposes only redacted, audit-verified lineage and **never authenticates the Worker response as a source of execution authority**. See [Worker/D1 host evidence contract](LOCAL_WORKER_D1_SERVICE_EVIDENCE.md). No deployed D1, remote issuer or provider use.
+
+## Follow-up: fresh source-origin attestation
+
+The next local-only increment signs the audited Worker/D1 response with an ephemeral native WebCrypto ES256 test key and checks its exact, fresh challenge with a separately pinned host key. This upgrades the local diagnostic from unsigned HTTP metadata, but **does not create a production deployment, authorize any tool, or attest Cloudflare's platform identity**. See [local Worker evidence attestation](LOCAL_WORKER_EVIDENCE_ATTESTATION.md).

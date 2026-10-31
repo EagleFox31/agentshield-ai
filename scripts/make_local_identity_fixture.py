@@ -12,6 +12,7 @@ from pathlib import Path
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,6 +155,22 @@ def main() -> None:
     jwks = json.dumps({"keys": [public_jwk, rotated_public_jwk]}, separators=(",", ":"))
     operator_jwks = json.dumps({"keys": [operator_public_jwk]}, separators=(",", ":"))
     service_jwks = json.dumps({"keys": [service_jwk]}, separators=(",", ":"))
+    # Distinct ephemeral Worker evidence signer. This PRIVATE test key only
+    # enters ignored .dev.vars, never Git or the D1 database. The host pins
+    # the separately exported PUBLIC PEM, not a public key from HTTP output.
+    worker_attestor = ec.generate_private_key(ec.SECP256R1())
+    p = worker_attestor.private_numbers()
+    coords = p.public_numbers
+    worker_attestor_jwk = json.dumps({
+        "kty": "EC", "crv": "P-256", "x": b64u(coords.x),
+        "y": b64u(coords.y), "d": b64u(p.private_value),
+    }, separators=(",", ":"))
+    (OUTPUT / "worker-evidence-public.pem").write_bytes(
+        worker_attestor.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"
         f'AGENT_JWT_ISSUER="{ISSUER}"\n'
@@ -164,7 +181,8 @@ def main() -> None:
         f"OPERATOR_JWKS_JSON='{operator_jwks}'\n"
         f'SERVICE_JWT_ISSUER="{service_issuer}"\n'
         f'SERVICE_JWT_AUDIENCE="{service_audience}"\n'
-        f"SERVICE_JWKS_JSON='{service_jwks}'\n",
+        f"SERVICE_JWKS_JSON='{service_jwks}'\n"
+        f"LOCAL_WORKER_ATTEST_PRIVATE_JWK='{worker_attestor_jwk}'\n",
         encoding="utf-8",
     )
     print("Prepared ephemeral ES256 fixtures and local-only public JWK configuration.")

@@ -29,6 +29,7 @@ from agentshield.bound_transport_contract import (
 from dataclasses import replace
 from agentshield.demo_invoice import INVOICE
 from agentshield.local_service_evidence import read_local_handoff_evidence, EvidenceUnavailable
+from agentshield.local_worker_evidence_attestation import attest_local_evidence, AttestationUnavailable
 from agentshield.local_command_outbox import (
     queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
 )
@@ -363,15 +364,8 @@ async def local_transport_binding_inspection(
     }
 
 
-@app.get("/_local/commands/{command_id}/service-evidence")
-async def local_service_handoff_evidence(
-    command_id: str, request: Request, response: Response,
-) -> dict[str, object]:
-    """LOCAL service-JWT-scoped D1 reconciliation data, NEVER authority to run.
-
-    This endpoint has no public equivalent and does not issue signed proofs.
-    Its local HTTP response is not cryptographically attested as server-origin.
-    """
+async def _service_evidence_for_command(command_id: str, request: Request) -> dict:
+    """Single authenticated/audit-verified source for both diagnostic routes."""
     env = _require_local_smoke(request)
     service = await _verified_local_identity(
         request, "SERVICE", "handoff:evidence:read",
@@ -380,7 +374,7 @@ async def local_service_handoff_evidence(
         raise HTTPException(status_code=403, detail="Untrusted host service")
     try:
         db = getattr(env, "DB", None)
-        result = await read_local_handoff_evidence(
+        return await read_local_handoff_evidence(
             D1ApprovalStore(db), D1AuditRepository(db),
             tenant_id=service.tenant_id, command_id=command_id,
         )
@@ -388,8 +382,36 @@ async def local_service_handoff_evidence(
         raise HTTPException(status_code=404, detail="Command not found") from exc
     except (AuditStorageError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=503, detail="Service evidence unavailable") from exc
+
+
+@app.get("/_local/commands/{command_id}/service-evidence")
+async def local_service_handoff_evidence(
+    command_id: str, request: Request, response: Response,
+) -> dict[str, object]:
+    """Legacy LOCAL diagnostic. Never treat unsigned JSON as host authority."""
+    result = await _service_evidence_for_command(command_id, request)
     response.headers["Cache-Control"] = "no-store"
     return result
+
+
+@app.get("/_local/commands/{command_id}/attested-evidence")
+async def local_attested_service_handoff_evidence(
+    command_id: str, request: Request, response: Response,
+) -> dict[str, object]:
+    """Local-only WebCrypto-signed source evidence bound to a caller challenge."""
+    result = await _service_evidence_for_command(command_id, request)
+    challenge = request.headers.get("x-agentshield-nonce")
+    env = _require_local_smoke(request)
+    try:
+        envelope = await attest_local_evidence(
+            result, nonce=challenge, tenant=result["tenant_id"],
+            command=command_id,
+            signer=getattr(env, "LOCAL_WORKER_ATTEST_PRIVATE_JWK", None),
+        )
+    except AttestationUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Local attestation unavailable") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return envelope
 
 
 @app.post("/_local/commands/{command_id}/dry-run")
