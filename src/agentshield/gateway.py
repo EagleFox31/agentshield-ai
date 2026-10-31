@@ -28,6 +28,7 @@ from agentshield.bound_transport_contract import (
 )
 from dataclasses import replace
 from agentshield.demo_invoice import INVOICE
+from agentshield.local_service_evidence import read_local_handoff_evidence, EvidenceUnavailable
 from agentshield.local_command_outbox import (
     queue_local_invoice, claim_local_command, mark_local_uncertain, CommandConflict,
 )
@@ -360,6 +361,35 @@ async def local_transport_binding_inspection(
         "enforcement_ready": False,
         "local_only": True,
     }
+
+
+@app.get("/_local/commands/{command_id}/service-evidence")
+async def local_service_handoff_evidence(
+    command_id: str, request: Request, response: Response,
+) -> dict[str, object]:
+    """LOCAL service-JWT-scoped D1 reconciliation data, NEVER authority to run.
+
+    This endpoint has no public equivalent and does not issue signed proofs.
+    Its local HTTP response is not cryptographically attested as server-origin.
+    """
+    env = _require_local_smoke(request)
+    service = await _verified_local_identity(
+        request, "SERVICE", "handoff:evidence:read",
+    )
+    if service.agent_id != "local-host-reconciler":
+        raise HTTPException(status_code=403, detail="Untrusted host service")
+    try:
+        db = getattr(env, "DB", None)
+        result = await read_local_handoff_evidence(
+            D1ApprovalStore(db), D1AuditRepository(db),
+            tenant_id=service.tenant_id, command_id=command_id,
+        )
+    except EvidenceUnavailable as exc:
+        raise HTTPException(status_code=404, detail="Command not found") from exc
+    except (AuditStorageError, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=503, detail="Service evidence unavailable") from exc
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @app.post("/_local/commands/{command_id}/dry-run")
