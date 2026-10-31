@@ -27,7 +27,7 @@ jobs:
       issues: read
       pull-requests: read
       id-token: write
-    uses: EagleFox31/appfactory-project-automation/.github/workflows/reusable-project-automation.yml@14d51168311c25f41d89df370c5e2ad2d5f42e83
+    uses: EagleFox31/appfactory-project-automation/.github/workflows/reusable-project-automation.yml@888b491d339901d5d7d6bf0d604369ee5955337b
     with:
       authentication: broker-user
       broker_url: https://appfactory-project-token-broker.lawrynnjennifer.workers.dev/v1/github/user-token
