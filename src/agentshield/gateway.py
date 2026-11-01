@@ -407,6 +407,7 @@ async def local_attested_service_handoff_evidence(
             result, nonce=challenge, tenant=result["tenant_id"],
             command=command_id,
             signer=getattr(env, "LOCAL_WORKER_ATTEST_PRIVATE_JWK", None),
+            key_id=getattr(env, "LOCAL_WORKER_ATTEST_KEY_ID", None),
         )
     except AttestationUnavailable as exc:
         raise HTTPException(status_code=503, detail="Local attestation unavailable") from exc

@@ -63,3 +63,7 @@ strict production transport and tenant-bound authoritative D1 reads,
 crash reconciliation, and an independently reviewed read-only provider
 adapter. No real provider, cloud deployment, paid resources, EVM write or
 blockchain transaction enabled here. Keep issues #2 and #3 **OPEN**.
+
+## Key lifecycle follow-up
+
+The local verifier now uses an operator-provisioned keyring with explicit v1 revocation, v2 activation, retiring-key overlap checks and a minimum manifest generation. See [local attestation key lifecycle](LOCAL_WORKER_ATTESTATION_KEY_LIFECYCLE.md). It is **not** KMS or authenticated production key distribution.

@@ -55,7 +55,7 @@ def _private_jwk(value: str) -> dict:
 
 async def attest_local_evidence(
     evidence: dict, *, nonce: str, tenant: str, command: str, signer: str,
-    now_ms: int | None = None,
+    now_ms: int | None = None, key_id: str = _KID,
 ) -> dict:
     """Sign verified D1 metadata AFTER authenticated SERVICE and D1 reads.
 
@@ -73,12 +73,14 @@ async def attest_local_evidence(
         or evidence.get("local_only") is not True
         or evidence.get("evidence_verified_locally") is not True):
         raise AttestationUnavailable("Invalid attestation request")
+    if (not isinstance(key_id, str) or re.fullmatch(r"ci-worker-evidence-v[1-9][0-9]{0,2}", key_id) is None):
+        raise AttestationUnavailable("Invalid local signer key ID")
     key_fields = _private_jwk(signer)
     timestamp = int(time.time() * 1000) if now_ms is None else now_ms
     if type(timestamp) is not int or timestamp <= 0:
         raise AttestationUnavailable("Invalid signer clock")
     payload = {
-        "type": _TYPE, "kid": _KID, "nonce": nonce,
+        "type": _TYPE, "kid": key_id, "nonce": nonce,
         "issued_at_ms": timestamp,
         "expires_at_ms": timestamp + _TTL_MS,
         "evidence": evidence,

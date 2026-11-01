@@ -31,6 +31,7 @@ class AttestationRejected(ValueError):
 def verify_local_worker_attestation(
     envelope: object, *, nonce: str, tenant: str, command: str,
     trusted_public_key_pem: bytes, now_ms: int,
+    expected_kid: str = _KID,
 ) -> dict:
     """Verify fresh, exact challenge/tenant/command and a pinned ES256 proof.
 
@@ -46,7 +47,7 @@ def verify_local_worker_attestation(
             "type", "kid", "nonce", "issued_at_ms", "expires_at_ms", "evidence",
         }:
             raise AttestationRejected("Unexpected signed claim schema")
-        if (payload["type"] != _TYPE or payload["kid"] != _KID
+        if (payload["type"] != _TYPE or payload["kid"] != expected_kid
             or payload["nonce"] != nonce or type(now_ms) is not int
             or type(payload["issued_at_ms"]) is not int
             or type(payload["expires_at_ms"]) is not int
