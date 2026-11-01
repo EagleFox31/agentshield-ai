@@ -27,10 +27,12 @@ on:
       - 'src/agentshield/host_mtls_handoff.py'
       - 'src/agentshield/local_worker_evidence_attestation.py'
       - 'src/agentshield/host_worker_attestation.py'
+      - 'src/agentshield/host_worker_keyring.py'
       - 'scripts/local_handoff_process.py'
       - 'src/agentshield/host_mtls_handoff.py'
       - 'src/agentshield/local_worker_evidence_attestation.py'
       - 'src/agentshield/host_worker_attestation.py'
+      - 'src/agentshield/host_worker_keyring.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
       - 'scripts/approval_cli.py'
@@ -73,6 +75,7 @@ on:
       - 'src/agentshield/host_mtls_handoff.py'
       - 'src/agentshield/local_worker_evidence_attestation.py'
       - 'src/agentshield/host_worker_attestation.py'
+      - 'src/agentshield/host_worker_keyring.py'
       - 'scripts/local_handoff_process.py'
       - 'scripts/seed_local_policy_registry.py'
       - 'src/agentshield/approvals.py'
@@ -927,7 +930,7 @@ jobs:
           # Strictly local and NEVER execution permission.
           uv run --locked --group worker python scripts/probe_local_worker_evidence.py \
             --port 8787 --tenant ci_local --command-id "$command_id" \
-            --pinned-worker-public-key .local-jwt/worker-evidence-public.pem \
+            --trusted-worker-keyring .local-jwt/worker-evidence-trust.json \
             < .local-jwt/service_evidence.txt > /tmp/local-attested-probe.json
           python - <<'PY_ATTESTED'
           import json
@@ -963,6 +966,27 @@ jobs:
             "http://127.0.0.1:8787/v1/commands/$command_id/attested-evidence")
           test "$status" = 404
           echo 'Worker native WebCrypto signed challenged local D1 source; host pinned public key independently verified with zero execution.'
+          # A generation-1 keyring or legacy PEM bypass MUST NOT be accepted.
+          python - <<'PY_REVOKE'
+          import json
+          from pathlib import Path
+          source = json.loads(Path(".local-jwt/worker-evidence-trust.json").read_text())
+          assert source["generation"] == 2
+          assert {r["kid"]:r["status"] for r in source["keys"]} == {
+              "ci-worker-evidence-v1":"revoked", "ci-worker-evidence-v2":"active",
+          }
+          source["generation"] = 1
+          Path("/tmp/agentshield-old-keyring.json").write_text(json.dumps(source))
+          PY_REVOKE
+          status=0
+          uv run --locked --group worker python scripts/probe_local_worker_evidence.py \
+            --port 8787 --tenant ci_local --command-id "$command_id" \
+            --trusted-worker-keyring /tmp/agentshield-old-keyring.json \
+            < .local-jwt/service_evidence.txt > /tmp/old-keyring-rejected.json || status=$?
+          test "$status" = 2
+          python -c 'import json;d=json.load(open("/tmp/old-keyring-rejected.json"));assert d["rejected"] and not d["execution_authorized"]'
+          echo 'Local keyring v2 active, v1 revoked; keyring generation downgrade rejected.'
+
 
 
           # Pure offline network-policy inspection: addresses come only from
