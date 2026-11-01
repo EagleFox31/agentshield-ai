@@ -15,7 +15,7 @@ algorithm, policy engine, D1 table, public endpoint or execution adapter.
 The local fixture creates two unrelated ephemeral P-256 signers:
 
 - `ci-worker-evidence-v1`: revoked, even if its old signature remains
-  cryptographically valid and its certificate lifetime has not passed
+  cryptographically valid and its configured key-validity window has not passed
 - `ci-worker-evidence-v2`: the sole active signer, placed in the ignored
   Worker `.dev.vars` for the current local CI run
 
