@@ -155,9 +155,10 @@ def main() -> None:
     jwks = json.dumps({"keys": [public_jwk, rotated_public_jwk]}, separators=(",", ":"))
     operator_jwks = json.dumps({"keys": [operator_public_jwk]}, separators=(",", ":"))
     service_jwks = json.dumps({"keys": [service_jwk]}, separators=(",", ":"))
-    # Distinct ephemeral Worker evidence signer. This PRIVATE test key only
-    # enters ignored .dev.vars, never Git or the D1 database. The host pins
-    # the separately exported PUBLIC PEM, not a public key from HTTP output.
+    # RAIDER rotation fixture: two different ephemeral keys; v1 revoked
+    # and v2 the only active key. Private material stays in ignored .dev.vars;
+    # host receives a separately provisioned LOCAL trust registry.
+    retired_attestor = ec.generate_private_key(ec.SECP256R1())
     worker_attestor = ec.generate_private_key(ec.SECP256R1())
     p = worker_attestor.private_numbers()
     coords = p.public_numbers
@@ -165,11 +166,30 @@ def main() -> None:
         "kty": "EC", "crv": "P-256", "x": b64u(coords.x),
         "y": b64u(coords.y), "d": b64u(p.private_value),
     }, separators=(",", ":"))
-    (OUTPUT / "worker-evidence-public.pem").write_bytes(
-        worker_attestor.public_key().public_bytes(
+    def public_pem(key):
+        return key.public_key().public_bytes(
             serialization.Encoding.PEM,
             serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
+        ).decode("ascii")
+    # Keep previous local PEM only for offline negative regression.
+    (OUTPUT / "worker-evidence-public.pem").write_text(
+        public_pem(worker_attestor), encoding="ascii",
+    )
+    now_ms = int(time.time() * 1000)
+    trust = {
+        "schema": "agentshield.local.worker-keyring.v1",
+        "generation": 2,
+        "keys": [
+            {"kid": "ci-worker-evidence-v1", "status": "revoked",
+             "not_before_ms": now_ms - 600000, "not_after_ms": now_ms + 600000,
+             "public_key_pem": public_pem(retired_attestor)},
+            {"kid": "ci-worker-evidence-v2", "status": "active",
+             "not_before_ms": now_ms - 600000, "not_after_ms": now_ms + 600000,
+             "public_key_pem": public_pem(worker_attestor)},
+        ],
+    }
+    (OUTPUT / "worker-evidence-trust.json").write_text(
+        json.dumps(trust, sort_keys=True, separators=(",", ":")), encoding="ascii",
     )
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"
@@ -182,7 +202,8 @@ def main() -> None:
         f'SERVICE_JWT_ISSUER="{service_issuer}"\n'
         f'SERVICE_JWT_AUDIENCE="{service_audience}"\n'
         f"SERVICE_JWKS_JSON='{service_jwks}'\n"
-        f"LOCAL_WORKER_ATTEST_PRIVATE_JWK='{worker_attestor_jwk}'\n",
+        f"LOCAL_WORKER_ATTEST_PRIVATE_JWK='{worker_attestor_jwk}'\\n"
+        'LOCAL_WORKER_ATTEST_KEY_ID="ci-worker-evidence-v2"\\n',
         encoding="utf-8",
     )
     print("Prepared ephemeral ES256 fixtures and local-only public JWK configuration.")
