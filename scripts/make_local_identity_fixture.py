@@ -13,6 +13,8 @@ from pathlib import Path
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import utils
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,6 +192,35 @@ def main() -> None:
     }
     (OUTPUT / "worker-evidence-trust.json").write_text(
         json.dumps(trust, sort_keys=True, separators=(",", ":")), encoding="ascii",
+    )
+    # An independently generated OFFLINE operator root signs trust updates.
+    # Only its PUBLIC PEM and the signed manifest are saved; the operator
+    # private key is never passed to a Worker or persisted in a fixture file.
+    offline_operator = ec.generate_private_key(ec.SECP256R1())
+    (OUTPUT / "keyring-operator-public.pem").write_bytes(
+        offline_operator.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    signed_header = {
+        "schema": "agentshield.local.signed-keyring.v1",
+        "operator_kid": "ci-local-offline-operator-v1",
+        "manifest": trust,
+    }
+    body = json.dumps(
+        signed_header, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True, allow_nan=False,
+    ).encode("ascii")
+    der_signature = offline_operator.sign(body, ec.ECDSA(hashes.SHA256()))
+    sig_r, sig_s = utils.decode_dss_signature(der_signature)
+    signed_header["signature"] = base64.urlsafe_b64encode(
+        sig_r.to_bytes(32, "big") + sig_s.to_bytes(32, "big"),
+    ).rstrip(b"=").decode("ascii")
+    (OUTPUT / "worker-evidence-trust-signed.json").write_text(
+        json.dumps(signed_header, sort_keys=True, separators=(",", ":"),
+                   ensure_ascii=True, allow_nan=False),
+        encoding="ascii",
     )
     (ROOT / ".dev.vars").write_text(
         "LOCAL_SMOKE_ENABLED=true\n"
