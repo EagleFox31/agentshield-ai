@@ -99,7 +99,12 @@ def install_local_signed_keyring(
                 if generation < old_generation:
                     raise AttestationRejected("Keyring rollback")
                 if generation == old_generation:
-                    if canonical != old_blob:
+                    # ECDSA may produce a fresh signature for identical
+                    # signed content. Compare the authenticated manifest,
+                    # NOT variable signature bytes; never rewrite the
+                    # existing committed generation for a no-op update.
+                    if (json.loads(canonical)["manifest"]
+                        != json.loads(old_blob)["manifest"]):
                         raise AttestationRejected("Conflicting same-generation trust update")
                     changed = False
                 else:
