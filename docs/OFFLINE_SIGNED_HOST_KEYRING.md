@@ -32,8 +32,9 @@ execution gateway, public API route, D1 migration or Cloudflare binding.
    signed envelope. `PRAGMA synchronous=FULL` and `BEGIN IMMEDIATE`
    protect each local update against interrupted writes and concurrent
    local installers.
-4. Reinstalling byte-equivalent signed state is idempotent; changing the
-   contents of the same generation is forbidden. New generations refuse
+4. Reinstalling the same authenticated manifest is idempotent, even if
+   ECDSA emits a different signature; changing the authenticated contents
+   of the same generation is forbidden. New generations refuse
    silently replaced key material, revoked-key revival, retiring-key
    reactivation, extended old key-validity windows or implicit key deletion.
    The last installed generation is read from the ledger, not supplied
