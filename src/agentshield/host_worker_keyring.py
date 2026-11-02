@@ -30,21 +30,18 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
-def verify_rotating_worker_attestation(
-    envelope: object, *, nonce: str, tenant: str, command: str,
-    trusted_manifest_bytes: bytes, minimum_generation: int, now_ms: int,
-) -> dict:
-    """Verify exact signed evidence against preprovisioned active/retiring keys.
+def validate_local_worker_keyring(
+    trusted_manifest_bytes: bytes, *, minimum_generation: int,
+) -> dict[str, dict]:
+    """Parse and validate host-provisioned public keys without a signed proof.
 
-    Revocation applies immediately regardless of message signing time.
-    A retiring key is accepted only while explicitly inside its local overlap
-    window; a revoked or expired key cannot be revived by replaying old JSON.
+    Retains the *same* strict key semantics for both offline installation
+    and challenge verification. Caller separately authenticates manifest.
     """
     try:
         if (not isinstance(trusted_manifest_bytes, bytes)
             or not 10 <= len(trusted_manifest_bytes) <= 7000
-            or type(minimum_generation) is not int or minimum_generation < 1
-            or type(now_ms) is not int or now_ms <= 0):
+            or type(minimum_generation) is not int or minimum_generation < 1):
             raise AttestationRejected("Invalid local trust provisioning")
         manifest = json.loads(
             trusted_manifest_bytes.decode("ascii"), object_pairs_hook=_unique_pairs,
@@ -88,6 +85,30 @@ def verify_rotating_worker_attestation(
             trusted[kid] = record
         if active != 1:
             raise AttestationRejected("Must provision exactly one active key")
+        return trusted
+    except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+        raise AttestationRejected("Local keyring invalid") from exc
+
+
+def verify_rotating_worker_attestation(
+    envelope: object, *, nonce: str, tenant: str, command: str,
+    trusted_manifest_bytes: bytes, minimum_generation: int, now_ms: int,
+) -> dict:
+    """Verify exact signed evidence against preprovisioned active/retiring keys.
+
+    Revocation applies immediately regardless of message signing time.
+    A retiring key is accepted only while explicitly inside its local overlap
+    window; a revoked or expired key cannot be revived by replaying old JSON.
+    """
+    try:
+        if (not isinstance(trusted_manifest_bytes, bytes)
+            or not 10 <= len(trusted_manifest_bytes) <= 7000
+            or type(minimum_generation) is not int or minimum_generation < 1
+            or type(now_ms) is not int or now_ms <= 0):
+            raise AttestationRejected("Invalid local trust provisioning")
+        trusted = validate_local_worker_keyring(
+            trusted_manifest_bytes, minimum_generation=minimum_generation,
+        )
         if (not isinstance(envelope, dict)
             or not isinstance(envelope.get("payload"), dict)):
             raise AttestationRejected("Missing signed evidence")
