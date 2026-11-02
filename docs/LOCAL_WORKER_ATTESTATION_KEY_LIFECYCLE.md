@@ -57,3 +57,7 @@ approval of signing-key changes, deployer-identity validation, persistent
 rollback guard and key-custody incident response **before** remotely trusted
 Worker evidence can authorize any next workflow. Continue to keep issues
 #2 and #3 OPEN.
+
+## Offline operator signature and installed host rollback state
+
+The next checkpoint independently signs the local keyring with an ephemeral offline operator root, installs validated updates in a durable host SQLite ledger and reads that pinned state before verifying any challenged Worker attestation. See [signed local operator keyring](OFFLINE_SIGNED_HOST_KEYRING.md). This is still not KMS, secure clock/monotonic hardware storage, trusted cloud deployment identity or a production authorization channel.
