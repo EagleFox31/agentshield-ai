@@ -7,6 +7,7 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/probe_local_worker_evidence.py'
+      - 'scripts/install_local_worker_keyring.py'
       - 'src/agentshield/host_worker_keyring.py'
       - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
@@ -19,6 +20,7 @@ on:
       - 'src/**'
       - 'tests/**'
       - 'scripts/probe_local_worker_evidence.py'
+      - 'scripts/install_local_worker_keyring.py'
       - 'src/agentshield/host_worker_keyring.py'
       - 'scripts/local_handoff_process.py'
       - 'pyproject.toml'
@@ -41,7 +43,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Verify Python syntax
-        run: python -m compileall -q src tests scripts/local_handoff_process.py scripts/probe_local_worker_evidence.py
+        run: python -m compileall -q src tests scripts/local_handoff_process.py scripts/probe_local_worker_evidence.py scripts/install_local_worker_keyring.py
       - name: Run security decisions regression tests (no runtime dependencies)
         env:
           PYTHONPATH: src
