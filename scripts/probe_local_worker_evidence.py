@@ -16,7 +16,7 @@ import secrets
 from pathlib import Path
 
 from agentshield.host_worker_attestation import AttestationRejected
-from agentshield.host_worker_keyring import verify_rotating_worker_attestation
+from agentshield.host_trust_ledger import verify_installed_worker_evidence
 
 _COMMAND = re.compile(r"local-command-[0-9a-f]{32}\Z")
 _TENANT = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
@@ -74,7 +74,7 @@ def local_probe(*, port: int, tenant: str, command: str, bearer: str) -> dict:
 
 
 def attested_local_probe(*, port: int, tenant: str, command: str,
-                         bearer: str, trusted_manifest_bytes: bytes,
+                         bearer: str, operator_public_pem: bytes, ledger_path: str,
                          challenge: str | None = None) -> dict:
     """Perform LOCAL-only challenged verification, never trust HTTP JSON alone."""
     # Validate caller inputs before generating or sending a challenge.
@@ -115,10 +115,10 @@ def attested_local_probe(*, port: int, tenant: str, command: str,
         return result
     response_body = json.loads(data, object_pairs_hook=unique,
                                parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid number")))
-    evidence = verify_rotating_worker_attestation(
+    evidence = verify_installed_worker_evidence(
         response_body, nonce=challenge, tenant=tenant, command=command,
-        trusted_manifest_bytes=trusted_manifest_bytes,
-        minimum_generation=2, now_ms=int(time.time() * 1000),
+        operator_public_pem=operator_public_pem,
+        ledger_path=ledger_path, now_ms=int(time.time() * 1000),
     )
     return {
         "source": "local_pywrangler_d1_attested",
@@ -138,12 +138,15 @@ def main() -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--command-id", required=True)
-    parser.add_argument("--trusted-worker-keyring", type=Path)
+    parser.add_argument("--trusted-operator-public-key", type=Path)
+    parser.add_argument("--host-trust-ledger", type=Path)
     args = parser.parse_args()
     try:
         # Strict bound: do not accept JWT via argv, query params or env.
         bearer = sys.stdin.read(8193)
-        if args.trusted_worker_keyring is None:
+        if (args.trusted_operator_public_key is None) != (args.host_trust_ledger is None):
+            raise ValueError("Incomplete host trust provisioning")
+        if args.trusted_operator_public_key is None:
             result = local_probe(
                 port=args.port, tenant=args.tenant,
                 command=args.command_id, bearer=bearer,
@@ -152,7 +155,8 @@ def main() -> int:
             result = attested_local_probe(
                 port=args.port, tenant=args.tenant,
                 command=args.command_id, bearer=bearer,
-                trusted_manifest_bytes=args.trusted_worker_keyring.read_bytes(),
+                operator_public_pem=args.trusted_operator_public_key.read_bytes(),
+                ledger_path=str(args.host_trust_ledger),
             )
     except (ValueError, OSError, UnicodeError, json.JSONDecodeError, AttestationRejected):
         print('{"rejected":true,"execution_authorized":false}')
