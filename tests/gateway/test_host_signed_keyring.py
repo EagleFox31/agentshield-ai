@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import base64
 import copy
-import hashlib
 import json
 import sqlite3
 import tempfile
@@ -173,7 +172,6 @@ class SignedLocalTrustLedgerTests(unittest.TestCase):
         content = Path(self.ledger).read_bytes()
         self.assertNotIn(b"PRIVATE KEY", content)
         self.assertNotIn(b"operator_private", content)
-        self.assertIn(hashlib.sha256(self.signed()).hexdigest().encode()[:0], content)
 
     def test_host_fails_if_root_replaced_after_install(self):
         self.install()
